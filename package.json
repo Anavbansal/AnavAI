@@ -1,0 +1,31 @@
+{
+  "name": "anavai-upstox-terminal",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "api": "node --env-file=.env local-api-server.mjs",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "echo \"No lint configuration yet\"",
+    "lambda:zip": "powershell -Command \"if (Test-Path dist-lambda) { Remove-Item -Recurse -Force dist-lambda }; New-Item -ItemType Directory dist-lambda | Out-Null; Copy-Item -Recurse lambda\\* dist-lambda; Compress-Archive -Path dist-lambda\\* -DestinationPath upstox-lambda.zip -Force\""
+  },
+  "dependencies": {
+    "lucide-react": "^0.383.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.1",
+    "recharts": "^2.15.4"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "vite": "^5.4.10"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}

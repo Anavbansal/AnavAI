@@ -1,0 +1,7 @@
+node_modules
+dist
+dist-lambda
+.env
+.env.local
+.env.production
+upstox-lambda.zip

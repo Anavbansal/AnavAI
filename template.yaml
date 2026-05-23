@@ -1,0 +1,115 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: AnavAI Upstox stock market app backend
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 20
+    Handler: index.handler
+    Environment:
+      Variables:
+        UPSTOX_CLIENT_ID: ""
+        UPSTOX_CLIENT_SECRET: ""
+        UPSTOX_REDIRECT_URI: ""
+        UPSTOX_SANDBOX_ACCESS_TOKEN: ""
+        FRONTEND_URL: ""
+        ALLOWED_ORIGIN: ""
+        GROQ_API_KEY: ""
+
+Resources:
+  SessionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda
+      Handler: functions/session.handler
+      Events:
+        ApiEvent:
+          Type: HttpApi
+          Properties:
+            Path: /session
+            Method: GET
+
+  AiAnalyzeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda
+      Handler: functions/ai-analyze.handler
+      Events:
+        ApiEvent:
+          Type: HttpApi
+          Properties:
+            Path: /ai/analyze
+            Method: POST
+
+  AuthUrlFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda
+      Handler: functions/auth-url.handler
+      Events:
+        ApiEvent:
+          Type: HttpApi
+          Properties:
+            Path: /auth/url
+            Method: GET
+
+  AuthExchangeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda
+      Handler: functions/auth-exchange.handler
+      Events:
+        ApiEvent:
+          Type: HttpApi
+          Properties:
+            Path: /auth/exchange
+            Method: POST
+
+  HistoricalIntradayV3Function:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda
+      Handler: functions/historical-intraday-v3.handler
+      Events:
+        ApiEvent:
+          Type: HttpApi
+          Properties:
+            Path: /historical/intraday-v3
+            Method: GET
+
+  HistoricalV3Function:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda
+      Handler: functions/historical-v3.handler
+      Events:
+        ApiEvent:
+          Type: HttpApi
+          Properties:
+            Path: /historical/v3
+            Method: GET
+
+  HistoricalOverviewFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda
+      Handler: functions/historical-overview.handler
+      Events:
+        ApiEvent:
+          Type: HttpApi
+          Properties:
+            Path: /historical/overview
+            Method: GET
+
+  FundamentalsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda
+      Handler: functions/fundamentals.handler
+      Events:
+        ApiEvent:
+          Type: HttpApi
+          Properties:
+            Path: /fundamentals
+            Method: GET

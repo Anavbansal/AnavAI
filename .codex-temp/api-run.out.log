@@ -1,0 +1,5 @@
+
+> anavai-upstox-terminal@1.0.0 api
+> node local-api-server.mjs
+
+Local API server running on http://127.0.0.1:3002
