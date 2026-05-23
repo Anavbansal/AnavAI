@@ -302,7 +302,7 @@ export async function searchInstruments(query, options = {}, token) {
     if (options.pageNumber) params.append('page_number', options.pageNumber)
     if (options.records) params.append('records', options.records)
 
-    const path = `/v3/search/instruments?${params.toString()}`
+    const path = `/v2/instruments/search?${params.toString()}`
     const response = await upstoxFetch(path, token)
     
     const results = response?.data || []
