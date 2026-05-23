@@ -493,53 +493,58 @@ async function resolveInstrument(symbol, token) {
 }
 
 // ─── REAL CANDLE FETCH from Upstox using SDK ──────────────────────────────
-async function fetchRealCandles(token, instrumentKey, resolution) {
+async function fetchRealCandles(token, instrumentKey, resolution, mode = "tech") {
   try {
-    let interval = "30minute";
-    let isIntraday = true;
+    const r = String(resolution).toUpperCase().trim();
+    const isDaily    = ["D", "1D", "DAY", "W", "WEEK", "M", "MONTH"].includes(r);
+    const isDelivery = mode === "delivery";
+    const mapCandles = candles => candles.map(c => ({
+      timestamp: new Date(c[0]).getTime(),
+      open: Number(c[1]), high: Number(c[2]),
+      low: Number(c[3]), close: Number(c[4]),
+      volume: Number(c[5]) || 0,
+    })).sort((a, b) => a.timestamp - b.timestamp);
 
-    const r = String(resolution).toUpperCase();
-    if (r === "1") interval = "1minute";
-    else if (["5", "3", "15", "30"].includes(r)) interval = "30minute";
-    else if (["60", "D", "1D", "DAY"].includes(r)) { interval = "day"; isIntraday = false; }
-    else if (["W", "WEEK"].includes(r)) { interval = "week"; isIntraday = false; }
-    else if (["M", "MONTH"].includes(r)) { interval = "month"; isIntraday = false; }
-
-    // Only call Intraday API if the requested timeframe is intraday
-    if (isIntraday) {
+    if (isDaily || isDelivery) {
+      // DELIVERY / Daily — V3 Historical API
+      const today = new Date().toISOString().slice(0, 10);
+      const from  = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
+      const histRes = isDelivery ? "D" : r;
       try {
-        const candles = await UpstoxSDK.getIntradayCandles(instrumentKey, interval, token);
+        const candles = await UpstoxSDK.getHistoricalCandles(instrumentKey, histRes, today, from, token);
         if (candles && candles.length > 0) {
-          console.log(`[SDK] Intraday API matched: ${candles.length} candles for ${instrumentKey}`);
-          return candles.map(c => ({
-            timestamp: new Date(c[0]).getTime(),
-            open: Number(c[1]), high: Number(c[2]),
-            low: Number(c[3]), close: Number(c[4]),
-            volume: Number(c[5]) || 0,
-          })).sort((a, b) => a.timestamp - b.timestamp);
+          console.log(`[V3 Historical] ${candles.length} candles (${histRes}) for ${instrumentKey} mode=${mode}`);
+          return mapCandles(candles);
         }
       } catch (e) {
-        console.warn("[SDK] Intraday fetch failed, falling back to historical:", e.message);
+        console.warn("[V3 Historical] failed:", e.message);
       }
+      return null;
     }
 
-    // Historical fetch (Fallback for Intraday OR default for Daily/Weekly)
+    // INTRADAY — V3 Intraday API (primary)
+    const intradayInterval = mapResolutionToIntradayInterval(r);
     try {
-      const today = new Date().toISOString().slice(0, 10);
-      const daysToFetch = isIntraday ? 30 : 365; // Get 1 year of data for daily charts to fix indicators
-      const from = new Date(Date.now() - daysToFetch * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-      const candles = await UpstoxSDK.getHistoricalCandles(instrumentKey, interval, today, from, token);
+      const candles = await UpstoxSDK.getIntradayCandles(instrumentKey, intradayInterval, token);
       if (candles && candles.length > 0) {
-        console.log(`[SDK] Historical API matched: ${candles.length} candles for ${instrumentKey}`);
-        return candles.map(c => ({
-          timestamp: new Date(c[0]).getTime(),
-          open: Number(c[1]), high: Number(c[2]),
-          low: Number(c[3]), close: Number(c[4]),
-          volume: Number(c[5]) || 0,
-        })).sort((a, b) => a.timestamp - b.timestamp);
+        console.log(`[V3 Intraday] ${candles.length} candles (${intradayInterval}) for ${instrumentKey} mode=${mode}`);
+        return mapCandles(candles);
       }
     } catch (e) {
-      console.warn("[SDK] Historical fetch failed:", e.message);
+      console.warn(`[V3 Intraday] failed for ${instrumentKey}:`, e.message);
+    }
+
+    // FALLBACK — V3 Historical with 30-day window
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const from  = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+      const candles = await UpstoxSDK.getHistoricalCandles(instrumentKey, r, today, from, token);
+      if (candles && candles.length > 0) {
+        console.log(`[V3 Hist-fallback] ${candles.length} candles for ${instrumentKey}`);
+        return mapCandles(candles);
+      }
+    } catch (e) {
+      console.warn("[V3 Hist-fallback] failed:", e.message);
     }
 
     return null;
@@ -547,6 +552,17 @@ async function fetchRealCandles(token, instrumentKey, resolution) {
     console.error("[fetchRealCandles] Error:", err.message);
     throw err;
   }
+}
+
+// Map UI resolution to a minute-count string for V3 intraday (SDK resolves unit internally)
+function mapResolutionToIntradayInterval(r) {
+  const map = { "1": "1", "3": "3", "5": "5", "15": "15", "30": "30",
+                "60": "60", "1H": "60", "120": "120", "2H": "120",
+                "D": "D", "1D": "D", "DAY": "D" };
+  if (map[r]) return map[r];
+  const num = parseInt(r, 10);
+  if (!isNaN(num) && num >= 1 && num <= 300) return String(num);
+  return "5";
 }
 
 // REAL LTP from Market Quotes API via SDK
@@ -562,7 +578,7 @@ async function fetchLTP(token, instrumentKey) {
 }
 
 // Build analyze payload from REAL candles
-async function buildRealAnalyzePayload(symbol, candles, ltpOverride) {
+async function buildRealAnalyzePayload(symbol, candles, ltpOverride, mode = "tech", instrumentKey = "", token = null) {
   const closes = candles.map(c => c.close);
   const latest = candles[candles.length - 1];
   const previous = candles[candles.length - 2] ?? latest;
@@ -598,25 +614,77 @@ async function buildRealAnalyzePayload(symbol, candles, ltpOverride) {
   const clean = String(symbol).trim().toUpperCase().replace(/^NSE:/i,"").replace(/-EQ|-INDEX/gi,"");
   const isIndex = ["NIFTY","NIFTY50","BANKNIFTY","FINNIFTY","MIDCPNIFTY"].includes(clean);
 
-  // Option chain for indices (Black-Scholes)
+  // Option chain — try real Upstox option chain API for 'fo' mode, else Black-Scholes
   let foGreeks = [];
-  if (isIndex) {
-    const base = Math.round(price / 50) * 50;
-    const offsets = [-200,-150,-100,-50,0,50,100,150,200];
-    foGreeks = offsets.flatMap(off => {
-      const strike = base + off;
-      const moneyness = Math.abs(price - strike) / Math.max(price,1);
-      const iv = 14 + moneyness * 55 + Math.random() * 3;
-      const g = calcOptionGreeks(price, strike, iv);
-      const ceLTP = Math.max(2, (price-strike)*0.55+45);
-      const peLTP = Math.max(2, (strike-price)*0.55+45);
-      const ceOI  = Math.round(40000 + Math.random()*150000);
-      const peOI  = Math.round(40000 + Math.random()*150000);
-      return [
-        { strikePrice:strike, optionType:"CE", delta:g.ceDelta, theta:g.ceTheta, vega:g.vega, gamma:g.gamma, iv:+iv.toFixed(2), ltp:+ceLTP.toFixed(2), oi:ceOI, tradeVolume:Math.round(ceOI*0.3) },
-        { strikePrice:strike, optionType:"PE", delta:g.peDelta, theta:g.peTheta, vega:g.vega, gamma:g.gamma, iv:+iv.toFixed(2), ltp:+peLTP.toFixed(2), oi:peOI, tradeVolume:Math.round(peOI*0.3) },
-      ];
-    });
+  if (isIndex || mode === "fo") {
+    // Try real option chain from Upstox API first
+    if (token && instrumentKey && (mode === "fo" || isIndex)) {
+      try {
+        const chainData = await UpstoxSDK.getOptionChain(instrumentKey, null, token);
+        if (Array.isArray(chainData) && chainData.length > 0) {
+          foGreeks = chainData.flatMap(item => {
+            const results = [];
+            if (item?.call_options) {
+              const ce = item.call_options;
+              const g = calcOptionGreeks(price, item.strike_price, ce?.market_data?.iv || 15);
+              results.push({
+                strikePrice:  Number(item.strike_price) || 0,
+                optionType:   "CE",
+                delta:        Number(ce?.option_greeks?.delta)  || g.ceDelta,
+                theta:        Number(ce?.option_greeks?.theta)  || g.ceTheta,
+                vega:         Number(ce?.option_greeks?.vega)   || g.vega,
+                gamma:        Number(ce?.option_greeks?.gamma)  || g.gamma,
+                iv:           Number(ce?.market_data?.iv)       || 15,
+                ltp:          Number(ce?.market_data?.ltp)      || 0,
+                oi:           Number(ce?.market_data?.oi)       || 0,
+                tradeVolume:  Number(ce?.market_data?.volume)   || 0,
+              });
+            }
+            if (item?.put_options) {
+              const pe = item.put_options;
+              const g = calcOptionGreeks(price, item.strike_price, pe?.market_data?.iv || 15);
+              results.push({
+                strikePrice:  Number(item.strike_price) || 0,
+                optionType:   "PE",
+                delta:        Number(pe?.option_greeks?.delta)  || g.peDelta,
+                theta:        Number(pe?.option_greeks?.theta)  || g.peTheta,
+                vega:         Number(pe?.option_greeks?.vega)   || g.vega,
+                gamma:        Number(pe?.option_greeks?.gamma)  || g.gamma,
+                iv:           Number(pe?.market_data?.iv)       || 15,
+                ltp:          Number(pe?.market_data?.ltp)      || 0,
+                oi:           Number(pe?.market_data?.oi)       || 0,
+                tradeVolume:  Number(pe?.market_data?.volume)   || 0,
+              });
+            }
+            return results;
+          });
+          console.log(`[Option Chain] ${foGreeks.length} strikes from Upstox real API`);
+        }
+      } catch (e) {
+        console.warn("[Option Chain] Real API failed, using Black-Scholes fallback:", e.message);
+        foGreeks = [];
+      }
+    }
+
+    // Fallback: Black-Scholes synthetic option chain
+    if (foGreeks.length === 0) {
+      const base = Math.round(price / 50) * 50;
+      const offsets = [-200,-150,-100,-50,0,50,100,150,200];
+      foGreeks = offsets.flatMap(off => {
+        const strike = base + off;
+        const moneyness = Math.abs(price - strike) / Math.max(price,1);
+        const iv = 14 + moneyness * 55 + Math.random() * 3;
+        const g = calcOptionGreeks(price, strike, iv);
+        const ceLTP = Math.max(2, (price-strike)*0.55+45);
+        const peLTP = Math.max(2, (strike-price)*0.55+45);
+        const ceOI  = Math.round(40000 + Math.random()*150000);
+        const peOI  = Math.round(40000 + Math.random()*150000);
+        return [
+          { strikePrice:strike, optionType:"CE", delta:g.ceDelta, theta:g.ceTheta, vega:g.vega, gamma:g.gamma, iv:+iv.toFixed(2), ltp:+ceLTP.toFixed(2), oi:ceOI, tradeVolume:Math.round(ceOI*0.3) },
+          { strikePrice:strike, optionType:"PE", delta:g.peDelta, theta:g.peTheta, vega:g.vega, gamma:g.gamma, iv:+iv.toFixed(2), ltp:+peLTP.toFixed(2), oi:peOI, tradeVolume:Math.round(peOI*0.3) },
+        ];
+      });
+    }
   }
 
   const ceOI = foGreeks.filter(g=>g.optionType==="CE").reduce((s,g)=>s+g.oi,0);
@@ -775,6 +843,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const sym  = body.symbol || body.symbolName || "NIFTY";
       const res_ = body.resolution || body.timeframe || "5";
+      const mode = body.mode || "tech";  // 'intraday' | 'delivery' | 'fo' | 'tech'
       const requestedInstrumentKey = body.instrumentKey || body.instrument_key || "";
 
       // Step 1: Resolve to Upstox instrument_key
@@ -791,7 +860,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       // Step 2: Fetch real candles from Upstox
-      const candles = await fetchRealCandles(token, resolved.instrumentKey, res_);
+      const candles = await fetchRealCandles(token, resolved.instrumentKey, res_, mode);
 
       if (!candles || candles.length === 0) {
         writeJson(req, res, 502, {
@@ -805,7 +874,7 @@ const server = http.createServer(async (req, res) => {
       const ltp = await fetchLTP(token, resolved.instrumentKey);
 
       // Step 4: Build accurate analysis on real data
-      const payload =  await buildRealAnalyzePayload(resolved.displaySymbol || sym, candles, ltp);
+      const payload = await buildRealAnalyzePayload(resolved.displaySymbol || sym, candles, ltp, mode, resolved.instrumentKey, token);
       writeJson(req, res, 200, payload);
       return;
     }

@@ -190,16 +190,22 @@ function buildAIShape(aiAnalysis, optionSignal, symbol) {
 }
 
 // ─── PUBLIC: analyzeSymbol ────────────────────────────────────────────────────
-export async function analyzeSymbol(input, timeframe = '5') {
+// mode: 'intraday' | 'delivery' | 'fo' | 'tech' (default)
+// When mode='delivery' the server will use V3 Historical API (daily candles)
+// When mode='intraday' or 'fo' the server will use V3 Intraday API
+export async function analyzeSymbol(input, timeframe = '5', mode = 'tech') {
   const symbol = typeof input === 'string' ? input : input?.symbol
   const instrumentKey = typeof input === 'string' ? '' : (input?.instrumentKey ?? '')
   const clean = cleanSym(symbol)
+
+  // Delivery always uses daily timeframe regardless of UI selection
+  const resolvedTf = mode === 'delivery' ? 'D' : timeframe
 
   try {
     const res = await fetch(ANALYZE_URL, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ symbol: clean, instrumentKey, resolution: timeframe, mode: 'tech' }),
+      body:    JSON.stringify({ symbol: clean, instrumentKey, resolution: resolvedTf, mode }),
     })
 
     const payload = await res.json().catch(() => null)

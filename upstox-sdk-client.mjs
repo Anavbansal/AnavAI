@@ -120,24 +120,45 @@ async function upstoxFetch(path, token, method = 'GET', body = null) {
  * @param {string} token - Optional token override
  * @returns {array} Array of candles [timestamp, open, high, low, close, volume]
  */
-export async function getIntradayCandles(instrumentKey, interval = '30minute', token) {
+/**
+ * V3 Intraday Candle API
+ * URL: GET /v3/historical-candle/intraday/{instrument_key}/{unit}/{interval}
+ * unit: 'minutes' | 'hours' | 'days'
+ * interval: 1-300 for minutes, 1-5 for hours, 1 for days
+ */
+export async function getIntradayCandles(instrumentKey, interval = '5', token) {
   if (!instrumentKey) throw new Error('instrumentKey is required')
 
   try {
-    let ivl = '30minute'
-    if (['1minute', '1', '1m'].includes(interval)) ivl = '1minute'
-    else if (['30minute', '30', '30m'].includes(interval)) ivl = '30minute'
-
-    const path = `/v2/historical-candle/intraday/${encodeURIComponent(instrumentKey)}/${ivl}`
+    const { unit, ivl } = resolveIntradayInterval(interval)
+    const encodedKey = encodeURIComponent(instrumentKey)
+    const path = `/v3/historical-candle/intraday/${encodedKey}/${unit}/${ivl}`
+    console.log(`[SDK] V3 Intraday: GET ${path}`)
     const response = await upstoxFetch(path, token)
 
     const candles = response?.data?.candles || []
-    console.log(`✓ Fetched ${candles.length} intraday candles for ${instrumentKey}`)
+    console.log(`\u2713 V3 Intraday: ${candles.length} candles for ${instrumentKey} (${unit}/${ivl})`)
     return candles
   } catch (err) {
-    console.error(`✗ Intraday candles fetch failed for ${instrumentKey}:`, err.message)
+    console.error(`\u2717 V3 Intraday candles failed for ${instrumentKey}:`, err.message)
     throw err
   }
+}
+
+/**
+ * Resolve a resolution string into V3 intraday unit + interval
+ * Supports: '1','3','5','15','30','60','1H','2H','D','day','1D'
+ */
+function resolveIntradayInterval(resolution) {
+  const r = String(resolution).toUpperCase().trim()
+  if (r === '60' || r === '1H')  return { unit: 'hours',   ivl: '1' }
+  if (r === '120' || r === '2H') return { unit: 'hours',   ivl: '2' }
+  if (r === '180' || r === '3H') return { unit: 'hours',   ivl: '3' }
+  if (r === '240' || r === '4H') return { unit: 'hours',   ivl: '4' }
+  if (r === 'D' || r === '1D' || r === 'DAY') return { unit: 'days', ivl: '1' }
+  const num = parseInt(r, 10)
+  if (!isNaN(num) && num >= 1 && num <= 300) return { unit: 'minutes', ivl: String(num) }
+  return { unit: 'minutes', ivl: '5' }
 }
 
 /**
@@ -149,32 +170,47 @@ export async function getIntradayCandles(instrumentKey, interval = '30minute', t
  * @param {string} token - Optional token override
  * @returns {array} Array of candles
  */
-export async function getHistoricalCandles(instrumentKey, interval = '30minute', toDate, fromDate, token) {
+/**
+ * V3 Historical Candle API
+ * URL: GET /v3/historical-candle/{instrument_key}/{unit}/{interval}/{to_date}/{from_date}
+ * unit: 'minutes' | 'hours' | 'days' | 'weeks' | 'months'
+ */
+export async function getHistoricalCandles(instrumentKey, interval = 'day', toDate, fromDate, token) {
   if (!instrumentKey || !toDate) {
     throw new Error('instrumentKey and toDate are required')
   }
 
   try {
-    let ivl = '30minute'
-    if (['1minute', '1', '1m'].includes(interval)) ivl = '1minute'
-    else if (['day', 'D', '1D'].includes(interval)) ivl = 'day'
-    else if (['week', 'W', '1W'].includes(interval)) ivl = 'week'
-    else if (['month', 'M', '1M'].includes(interval)) ivl = 'month'
+    const { unit, ivl } = resolveHistoricalInterval(interval)
+    const encodedKey = encodeURIComponent(instrumentKey)
+    let path = `/v3/historical-candle/${encodedKey}/${unit}/${ivl}/${encodeURIComponent(toDate)}`
+    if (fromDate) path += `/${encodeURIComponent(fromDate)}`
 
-    let path = `/v2/historical-candle/${encodeURIComponent(instrumentKey)}/${ivl}/${encodeURIComponent(toDate)}`
-    if (fromDate) {
-      path += `/${encodeURIComponent(fromDate)}`
-    }
-
+    console.log(`[SDK] V3 Historical: GET ${path}`)
     const response = await upstoxFetch(path, token)
 
     const candles = response?.data?.candles || []
-    console.log(`✓ Fetched ${candles.length} historical candles for ${instrumentKey}`)
+    console.log(`\u2713 V3 Historical: ${candles.length} candles for ${instrumentKey} (${unit}/${ivl})`)
     return candles
   } catch (err) {
-    console.error(`✗ Historical candles fetch failed:`, err.message)
+    console.error(`\u2717 V3 Historical candles failed:`, err.message)
     throw err
   }
+}
+
+/**
+ * Resolve a resolution string into V3 historical unit + interval
+ */
+function resolveHistoricalInterval(resolution) {
+  const r = String(resolution).toUpperCase().trim()
+  if (r === 'D' || r === 'DAY' || r === '1D') return { unit: 'days',   ivl: '1' }
+  if (r === 'W' || r === 'WEEK')              return { unit: 'weeks',  ivl: '1' }
+  if (r === 'M' || r === 'MONTH')             return { unit: 'months', ivl: '1' }
+  if (r === '60' || r === '1H')               return { unit: 'hours',  ivl: '1' }
+  if (r === '120' || r === '2H')              return { unit: 'hours',  ivl: '2' }
+  const num = parseInt(r, 10)
+  if (!isNaN(num) && num >= 1 && num <= 300)  return { unit: 'minutes', ivl: String(num) }
+  return { unit: 'days', ivl: '1' }
 }
 
 /**

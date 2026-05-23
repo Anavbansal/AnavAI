@@ -9,11 +9,11 @@ export function useAnalysis() {
     error: null,
   })
 
-  const analyze = useCallback(async (symbol, timeframe) => {
+  const analyze = useCallback(async (symbol, timeframe, mode = 'tech') => {
     if (!symbol) return
     setState(s => ({ ...s, loading: true, error: null }))
     try {
-      const data = await analyzeSymbol(symbol, timeframe)
+      const data = await analyzeSymbol(symbol, timeframe, mode)
       const ai = data.ai
       setState({ data, ai, loading: false, error: null })
     } catch (e) {

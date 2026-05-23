@@ -23,24 +23,51 @@ const TABS = [
   { id: 'mf', label: '🏦 Mutual Funds' },
 ]
 
+// Map tab id to API mode
+const TAB_MODE = {
+  overview: 'tech',
+  intraday: 'intraday',
+  delivery: 'delivery',
+  fogreeks: 'fo',
+  portfolio: 'tech',
+  mf: 'tech',
+}
+
 export default function Dashboard() {
   const [tab, setTab] = useState('overview')
   const { data, ai, loading, error, analyze } = useAnalysis()
   const [symbol, setSymbol] = useState('NIFTY')
+  const [currentTf, setCurrentTf] = useState('5')
+  const [currentSym, setCurrentSym] = useState('NIFTY')
 
   useEffect(() => {
-    analyze('NIFTY', '5')
+    analyze('NIFTY', '5', 'tech')
   }, [])
+
+  // Re-fetch with correct mode when tab changes (if we already have a symbol)
+  function handleTabChange(newTab) {
+    setTab(newTab)
+    const mode = TAB_MODE[newTab] || 'tech'
+    // Don't re-fetch for portfolio/mf tabs
+    if (['portfolio', 'mf'].includes(newTab)) return
+    const tf = newTab === 'delivery' ? 'D' : currentTf
+    analyze(currentSym, tf, mode)
+  }
 
   function handleAnalyze(sym, tf) {
     const displaySymbol = typeof sym === 'string' ? sym : (sym?.symbol || 'NIFTY')
     setSymbol(displaySymbol)
-    analyze(sym, tf)
+    setCurrentSym(sym)
+    setCurrentTf(tf)
+    const mode = TAB_MODE[tab] || 'tech'
+    const resolvedTf = tab === 'delivery' ? 'D' : tf
+    analyze(sym, resolvedTf, mode)
   }
 
   function handleSelectSymbol(sym) {
     setSymbol(sym)
-    analyze(sym, '5')
+    setCurrentSym(sym)
+    analyze(sym, '5', 'tech')
     setTab('overview')
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -56,7 +83,7 @@ export default function Dashboard() {
         {/* Tabs */}
         <div className="flex gap-1 flex-wrap">
           {TABS.map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)}
+            <button key={t.id} onClick={() => handleTabChange(t.id)}
               className={`font-mono border px-3 py-1.5 transition-all text-xs ${tab === t.id ? 'border-accent text-accent bg-accent/10' : 'border-border text-muted hover:border-accent/50 hover:text-accent/70'}`}>
               {t.label}
             </button>
