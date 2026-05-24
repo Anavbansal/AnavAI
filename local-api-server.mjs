@@ -492,6 +492,39 @@ async function resolveInstrument(symbol, token) {
   };
 }
 
+// ─── MOCK FALLBACK ──────────────────────────────────────────────────────────
+// Generates realistic mock candles if Upstox APIs are completely down or market is closed
+function generateMockCandles(symbol, resolution, count = 150, ltpOverride = null) {
+  const BASE_PRICES = {
+    "NIFTY": 24850, "NIFTY50": 24850, "BANKNIFTY": 52210, "FINNIFTY": 23480, "MIDCPNIFTY": 11240,
+    "RELIANCE": 2890, "TCS": 3754, "HDFCBANK": 1612, "INFY": 1548, "ICICIBANK": 1289
+  };
+  const clean = String(symbol).trim().toUpperCase().replace(/^NSE:/i, "").replace(/-EQ|-INDEX/gi, "");
+  const basePrice = ltpOverride || BASE_PRICES[clean] || 1000;
+  
+  const map = { "1": 1, "3": 3, "5": 5, "15": 15, "30": 30, "60": 60, "1H": 60, "D": 1440, "1D": 1440, "DAY": 1440 };
+  const tfMins = map[String(resolution).toUpperCase()] || 5;
+
+  const candles = [];
+  const now = Date.now();
+  let price = basePrice;
+  const volatility = basePrice * 0.0018;
+
+  for (let i = count; i >= 0; i--) {
+    const ts = now - i * tfMins * 60 * 1000;
+    const open = price;
+    const drift = (Math.random() - 0.485) * volatility * (0.4 + Math.random() * 1.2);
+    const close = Math.max(open * 0.97, open + drift);
+    const wickMult = Math.random() * 0.7;
+    const high = Math.max(open, close) + volatility * wickMult;
+    const low = Math.min(open, close) - volatility * wickMult * 0.6;
+    const volume = Math.round(40000 + Math.random() * 180000);
+    candles.push({ timestamp: ts, open: +open.toFixed(2), high: +high.toFixed(2), low: +low.toFixed(2), close: +close.toFixed(2), volume });
+    price = close;
+  }
+  return candles;
+}
+
 // ─── REAL CANDLE FETCH from Upstox API ──────────────────────────────
 async function fetchRealCandles(token, instrumentKey, resolution, mode = "tech") {
   try {
@@ -535,10 +568,11 @@ async function fetchRealCandles(token, instrumentKey, resolution, mode = "tech")
       console.warn(`[V3 Intraday] failed for ${instrumentKey}:`, e.message);
     }
 
-    // FALLBACK — V3 Historical with 77-day window (covers 11 weeks)
+    // FALLBACK — V3 Historical with 30-day window (Upstox limit for minute candles)
+    // FALLBACK — V3 Historical with 7-day window (1 week)
     try {
       const today = new Date().toISOString().slice(0, 10);
-      const from  = new Date(Date.now() - 77 * 86400000).toISOString().slice(0, 10); // 11 weeks
+      const from  = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
       const candles = await UpstoxAPI.getHistoricalCandles(instrumentKey, r, today, from, token);
       if (candles && candles.length > 0) {
         console.log(`[V3 Hist-fallback] ${candles.length} candles for ${instrumentKey}`);
@@ -1009,27 +1043,32 @@ const server = http.createServer(async (req, res) => {
       }
 
       // Step 2: Fetch real candles from Upstox
-      const candles = await fetchRealCandles(token, resolved.instrumentKey, res_, mode);
-
-      if (!candles || candles.length === 0) {
-        writeJson(req, res, 502, {
-          error: "Upstox returned no candle data. Token may be expired — use Connect Live OAuth or update sandbox token.",
-          instrKey: resolved.instrumentKey,
-        });
-        return;
-      }
+      let candles = await fetchRealCandles(token, resolved.instrumentKey, res_, mode);
 
       // Step 3: Fetch real LTP (best-effort)
       const ltp = await fetchLTP(token, resolved.instrumentKey);
 
+      let usedMock = false;
+      if (!candles || candles.length === 0) {
+        console.warn(`[Mock Fallback] Generating mock candles for ${resolved.displaySymbol} because Upstox returned 0 data.`);
+        candles = generateMockCandles(resolved.displaySymbol, res_, 150, ltp);
+        usedMock = true;
+      }
+
       // Step 4: Build accurate analysis on real data
       const payload = await buildRealAnalyzePayload(resolved.displaySymbol || sym, candles, ltp, mode, resolved.instrumentKey, token);
+      
+      if (usedMock) {
+        payload.quality.source = "MOCK_FALLBACK";
+        payload.service = "anavai-browser-fallback";
+      }
+      
       writeJson(req, res, 200, payload);
       return;
     }
 
-    // ── /api/search?q= — symbol search ──────────────────────────────────────
-    if (req.method === "GET" && url.pathname === "/api/search") {
+    // ── /api/search ──────────────────────────────────────────────────────────
+    if (req.method === "GET" && (url.pathname === "/api/search" || url.pathname === "/search")) {
       const q = (url.searchParams.get("q") || "").trim().toUpperCase();
       if (!q) {
         writeJson(req, res, 200, { results: [] });
