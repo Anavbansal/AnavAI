@@ -565,6 +565,39 @@ function mapResolutionToIntradayInterval(r) {
   return "5";
 }
 
+// ─── Candle Pattern Detection ────────────────────────────────────────────────
+function detectCandlePatterns(candles) {
+  if (!candles || candles.length < 3) return [];
+  const patterns = [];
+  const c = candles[candles.length - 1];
+  const p = candles[candles.length - 2];
+  const pp= candles[candles.length - 3];
+  const body = Math.abs(c.close - c.open);
+  const range = c.high - c.low;
+  const upperWick = c.high - Math.max(c.open, c.close);
+  const lowerWick = Math.min(c.open, c.close) - c.low;
+
+  // Doji
+  if (range > 0 && body / range < 0.1) patterns.push('DOJI');
+  // Hammer
+  if (lowerWick > body * 2 && upperWick < body * 0.5 && c.close > c.open) patterns.push('HAMMER');
+  // Shooting Star
+  if (upperWick > body * 2 && lowerWick < body * 0.5 && c.close < c.open) patterns.push('SHOOTING_STAR');
+  // Bullish Engulfing
+  if (p.close < p.open && c.close > c.open && c.close > p.open && c.open < p.close) patterns.push('BULLISH_ENGULFING');
+  // Bearish Engulfing
+  if (p.close > p.open && c.close < c.open && c.open > p.close && c.close < p.open) patterns.push('BEARISH_ENGULFING');
+  // Morning Star
+  if (pp.close < pp.open && Math.abs(p.close-p.open) < (p.high-p.low)*0.3 && c.close > c.open && c.close > (pp.open+pp.close)/2) patterns.push('MORNING_STAR');
+  // Evening Star
+  if (pp.close > pp.open && Math.abs(p.close-p.open) < (p.high-p.low)*0.3 && c.close < c.open && c.close < (pp.open+pp.close)/2) patterns.push('EVENING_STAR');
+  // Marubozu Bull
+  if (c.close > c.open && upperWick < body*0.05 && lowerWick < body*0.05) patterns.push('BULLISH_MARUBOZU');
+  // Marubozu Bear
+  if (c.close < c.open && upperWick < body*0.05 && lowerWick < body*0.05) patterns.push('BEARISH_MARUBOZU');
+  return patterns;
+}
+
 // REAL LTP from Market Quotes API
 async function fetchLTP(token, instrumentKey) {
   try {
@@ -702,36 +735,52 @@ async function buildRealAnalyzePayload(symbol, candles, ltpOverride, mode = "tec
   const groqKey = process.env.GROQ_API_KEY;
   if (groqKey) {
     try {
-      const groqPrompt = `You are a professional Indian equities trading assistant.
-Return ONLY one valid JSON object with this exact schema:
-{
-  "verdict": "BUY|SELL|HOLD",
-  "confidence": number,
-  "summary": string,
-  "entry": number,
-  "target": number,
-  "stopLoss": number,
-  "riskReward": number,
-  "reasons": string[],
-  "risks": string[],
-  "newsImpact": string,
-  "optionSuggestion": null,
-  "timeframeAlignment": { "shortTerm": string, "mediumTerm": string, "trend": string }
-}
-Rules:
-- If trendConsistency is "DIVERGENT", default to HOLD unless evidence is very strong.
-- Only issue BUY/SELL if M1, M5 and M15 align with price vs VWAP direction.
-- Keep confidence under 70 when alignment is weak.
-- Keep reasons and risks concise and practical (max 4 each).
-Input: ${JSON.stringify({ symbol:clean, price, vwap:+vwap.toFixed(2), ema20:+ema20.toFixed(2), ema50:+ema50.toFixed(2), rsi, atr:+atr.toFixed(2), support, resistance, regime, trendConsistency, volumeRatio:+volumeRatio.toFixed(2), pcr, m1Trend, m5Trend, m15Trend, macd })}`;
+      // Rich indicator context for AI
+      const candlePatterns = detectCandlePatterns(candles);
+      const ema9val   = +calcEMA(closes, 9).toFixed(2);
+      const ema200val = +calcEMA(closes, 200).toFixed(2);
+      const priceVsEMA200 = ema200val ? (((price-ema200val)/ema200val)*100).toFixed(2) : '0';
+      const priceVsVWAP   = vwap ? (((price-vwap)/vwap)*100).toFixed(2) : '0';
+      const bbWidth = bb ? ((bb.upper-bb.lower)/Math.max(bb.middle,1)*100).toFixed(2) : '0';
+      const highestHigh = +Math.max(...candles.slice(-20).map(c=>c.high)).toFixed(2);
+      const lowestLow   = +Math.min(...candles.slice(-20).map(c=>c.low)).toFixed(2);
+
+      const groqPrompt = `You are an expert SEBI-registered research analyst for Indian equity markets (NSE/BSE).
+Analyze the real-time data below and return ONLY valid JSON (no markdown, no extra text).
+
+MARKET DATA: ${clean}
+Price: ₹${price.toFixed(2)} | VWAP: ₹${vwap.toFixed(2)} | vs VWAP: ${priceVsVWAP}%
+EMA9: ₹${ema9val} | EMA20: ₹${ema20.toFixed(2)} | EMA50: ₹${ema50.toFixed(2)} | EMA200: ₹${ema200val} (vs: ${priceVsEMA200}%)
+RSI: ${rsi} | MACD: ${macd.macd.toFixed(3)} | Signal: ${macd.signal.toFixed(3)} | Histogram: ${macd.histogram.toFixed(4)}
+BB: Upper ₹${bb?.upper||0} / Mid ₹${bb?.middle||0} / Lower ₹${bb?.lower||0} | Width: ${bbWidth}%
+Supertrend: ${supertrend?.direction?.toUpperCase()||'N/A'} @ ₹${supertrend?.value||0}
+Ichimoku: Tenkan ${ichimoku?.tenkan||'N/A'} | Kijun ${ichimoku?.kijun||'N/A'}
+Support: ₹${support} | Resistance: ₹${resistance} | ATR: ₹${atr.toFixed(2)}
+Volume Ratio: ${volumeRatio.toFixed(2)}x | PCR: ${pcr} | Regime: ${regime}
+Timeframes: M1=${m1Trend} M5=${m5Trend} M15=${m15Trend} | Consistency: ${trendConsistency}
+Candle Patterns: ${candlePatterns.length > 0 ? candlePatterns.join(', ') : 'None'}
+
+DECISION RULES:
+- BUY: price>VWAP + price>EMA20 + MACD histogram>0 + RSI 40-68 + Supertrend UP + M5+M15 BULLISH
+- SELL: price<VWAP + price<EMA20 + MACD histogram<0 + RSI 32-60 + Supertrend DOWN + M5+M15 BEARISH
+- HOLD: divergent signals, RSI extreme without reversal, HIGH_VOL_CHOP regime
+- Entry: optimal level (not always current price)
+- SL: below nearest support or supertrend value
+- Target: nearest resistance or R:R > 1.5x
+- Confidence: 40-92 range only. Cap at 55 for HIGH_VOL_CHOP.
+- Reasons must include specific numbers/price levels (max 4)
+- Risks must include specific price levels (max 3)
+
+Return this exact JSON:
+{"verdict":"BUY|SELL|HOLD","confidence":number,"summary":"2-3 sentence technical summary with ₹ levels","entry":number,"target":number,"stopLoss":number,"riskReward":number,"reasons":["with numbers"],"risks":["with ₹ levels"],"newsImpact":"PCR/OI/volume sentence","optionSuggestion":null,"timeframeAlignment":{"shortTerm":"BULLISH|BEARISH|SIDEWAYS","mediumTerm":"BULLISH|BEARISH|SIDEWAYS","trend":"BULLISH|BEARISH|SIDEWAYS"}}`;
 
       const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
         headers: { "Authorization": `Bearer ${groqKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "llama-3.3-70b-versatile",
-          temperature: 0.2,
-          max_tokens: 800,
+          temperature: 0.15,
+          max_tokens: 1200,
           messages: [{ role: "user", content: groqPrompt }]
         })
       });
@@ -979,11 +1028,115 @@ const server = http.createServer(async (req, res) => {
           page_number: pageNumber,
           page_size: pageSize,
         }, newsToken);
-
         writeJson(req, res, 200, newsData);
+      } catch (upstoxErr) {
+        console.warn(`[News] Upstox failed (${upstoxErr.message}), using free fallback...`);
+        // Fallback: Google News RSS for the symbol
+        try {
+          const symForSearch = (instrumentKeys || "").split("|").pop()?.replace(/\+/g," ") || "Indian stock market";
+          const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(symForSearch + " NSE stock")}&hl=en-IN&gl=IN&ceid=IN:en`;
+          const rssRes = await fetch(rssUrl, {
+            headers: { "User-Agent": "Mozilla/5.0 (compatible; AnavAI/1.0)" }
+          });
+          const rssText = await rssRes.text();
+          // Parse RSS items
+          const items = [];
+          const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+          let match;
+          while ((match = itemRegex.exec(rssText)) !== null && items.length < 10) {
+            const item = match[1];
+            const title = (/<title><!\[CDATA\[(.*?)\]\]><\/title>/.exec(item) || /<title>(.*?)<\/title>/.exec(item))?.[1] || "";
+            const link  = (/<link>(.*?)<\/link>/.exec(item))?.[1]?.replace(/&amp;/g,"&") || "";
+            const pubDate = (/<pubDate>(.*?)<\/pubDate>/.exec(item))?.[1] || "";
+            const source = (/<source[^>]*>(.*?)<\/source>/.exec(item))?.[1] || "Google News";
+            if (title) items.push({
+              id: `rss-${items.length}`,
+              heading: title,
+              article_link: link,
+              published_time: pubDate ? new Date(pubDate).getTime() : Date.now(),
+              source,
+              thumbnail: null,
+            });
+          }
+          const key = instrumentKeys || "market";
+          writeJson(req, res, 200, {
+            status: "success",
+            data: { [key]: items },
+            _source: "google_news_rss_fallback"
+          });
+        } catch (rssErr) {
+          console.error(`[News RSS Fallback Error] ${rssErr.message}`);
+          writeJson(req, res, 200, { status: "success", data: {}, _source: "empty_fallback" });
+        }
+      }
+      return;
+    }
+
+    // ── /fundamentals — Company Fundamentals via open APIs ─────────────────
+    if (req.method === "GET" && url.pathname === "/fundamentals") {
+      const isin = url.searchParams.get("isin") || "";
+      const symbol = url.searchParams.get("symbol") || "";
+      const type = url.searchParams.get("type") || "profile";
+
+      if (!isin && !symbol) {
+        writeJson(req, res, 400, { status: "error", message: "isin or symbol required" });
+        return;
+      }
+
+      try {
+        // Try NSE India API for fundamentals (free, no auth)
+        const nseSymbol = symbol.replace(/^NSE:/i, "").replace(/-EQ/gi, "").toUpperCase();
+        let fundamentalData = null;
+
+        // Fetch from NSE
+        try {
+          const nseRes = await fetch(`https://www.nseindia.com/api/quote-equity?symbol=${encodeURIComponent(nseSymbol)}`, {
+            headers: {
+              "Accept": "application/json",
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+              "Referer": "https://www.nseindia.com",
+            }
+          });
+          if (nseRes.ok) {
+            const nseData = await nseRes.json();
+            const info = nseData?.info || {};
+            const metadata = nseData?.metadata || {};
+            const priceInfo = nseData?.priceInfo || {};
+            fundamentalData = {
+              company_name: info?.companyName || symbol,
+              sector: info?.sector || info?.industry || "",
+              isin: info?.isin || isin,
+              business_description: info?.companyProfile || `${info?.companyName || symbol} is listed on NSE under ${info?.sector || "Indian"} sector.`,
+              pe_ratio: Number(metadata?.pdSectorPe) || null,
+              pb_ratio: Number(priceInfo?.pbRatio) || null,
+              eps: Number(metadata?.eps) || null,
+              market_cap: Number(metadata?.totalTradedValue) || null,
+              week52High: Number(priceInfo?.weekHighLow?.max) || null,
+              week52Low: Number(priceInfo?.weekHighLow?.min) || null,
+              dividend_yield: Number(priceInfo?.dividendYield) || null,
+              face_value: Number(metadata?.pdFaceValue) || null,
+            };
+            console.log(`[Fundamentals] NSE data fetched for ${nseSymbol}`);
+          }
+        } catch (nseErr) {
+          console.warn("[Fundamentals] NSE fetch failed:", nseErr.message);
+        }
+
+        if (fundamentalData) {
+          writeJson(req, res, 200, { status: "success", data: fundamentalData });
+        } else {
+          writeJson(req, res, 200, {
+            status: "success",
+            data: {
+              company_name: symbol || isin,
+              sector: "Data unavailable",
+              isin,
+              business_description: "Fundamental data not available. Please check symbol or try again.",
+            }
+          });
+        }
       } catch (err) {
-        console.error(`[News Error] ${err.message}`);
-        writeJson(req, res, 400, { status: "error", message: err.message });
+        writeJson(req, res, 500, { status: "error", message: err.message });
       }
       return;
     }
@@ -1008,26 +1161,26 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const systemPrompt = `You are ANAV AI — an expert Indian stock market trading assistant built into the ANAV PRO terminal.
-You have real-time access to the user's current analysis context.
-You help with: trade setups, technical analysis, F&O strategies, risk management, market concepts, and Indian market specifics (NSE/BSE/SEBI rules).
+      const systemPrompt = `You are ANAV AI — a professional Indian stock market assistant with expertise in Technical Analysis, F&O, Fundamentals, and Risk Management.
 
-Current Market Context:
-${context.symbol ? `Symbol: ${context.symbol}` : "No symbol selected"}
-${context.price ? `Price: ₹${context.price}` : ""}
-${context.verdict ? `AI Verdict: ${context.verdict} (${context.confidence}% confidence)` : ""}
-${context.rsi ? `RSI: ${context.rsi}` : ""}
-${context.regime ? `Market Regime: ${context.regime}` : ""}
-${context.entry ? `Entry: ₹${context.entry} | Target: ₹${context.target} | SL: ₹${context.stopLoss}` : ""}
-${context.vwap ? `VWAP: ₹${context.vwap} | EMA20: ₹${context.ema20}` : ""}
+LIVE MARKET CONTEXT:
+${context.symbol ? `Symbol: ${context.symbol} | LTP: ₹${context.price} | VWAP: ₹${context.vwap||'N/A'} | EMA20: ₹${context.ema20||'N/A'}` : "No symbol selected"}
+${context.rsi ? `RSI: ${context.rsi} | Regime: ${context.regime||'N/A'} | Trend Consistency: ${context.trendConsistency||'N/A'}` : ""}
+${context.verdict ? `AI Signal: ${context.verdict} @ ${context.confidence}% confidence` : ""}
+${context.entry ? `Setup: Entry ₹${context.entry} → Target ₹${context.target} | SL ₹${context.stopLoss} | R:R ${context.riskReward}` : ""}
+${context.support ? `Support: ₹${context.support} | Resistance: ₹${context.resistance}` : ""}
+${context.macd ? `MACD: ${JSON.stringify(context.macd)}` : ""}
+${context.supertrend ? `Supertrend: ${context.supertrend?.direction} @ ₹${context.supertrend?.value}` : ""}
+${context.pcr ? `PCR: ${context.pcr} | Volume Ratio: ${context.volumeRatio||'N/A'}x` : ""}
 
-Rules:
-- Be concise and practical. Use ₹ for prices.
-- Always mention risk management.
-- For F&O questions, mention Greeks if relevant.
-- Never guarantee profits. Always say "as per current analysis" or "based on indicators".
-- If asked about a symbol not in context, give general guidance.
-- Keep replies under 200 words unless a detailed explanation is explicitly needed.`;
+RULES:
+- Use ₹ for all prices. Cite exact price levels from context.
+- For trade questions: give Entry, Target, SL with exact levels. Include R:R.
+- For F&O questions: mention Delta, IV, OI. Suggest CE/PE strikes with strikes.
+- Give clear directional views — don't say "it depends" without explanation.
+- Always mention SL and position sizing (max 1-2% capital risk per trade).
+- Never guarantee profits. Use "as per current technicals" / "indicator suggests".
+- Format: **bold** key numbers. Bullets for lists. Max 150 words. Be precise.`;
 
       const messages = [
         ...history.map(h => ({ role: h.role, content: h.content })),
@@ -1039,8 +1192,8 @@ Rules:
         headers: { "Authorization": `Bearer ${groqKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "llama-3.3-70b-versatile",
-          temperature: 0.4,
-          max_tokens: 500,
+          temperature: 0.35,
+          max_tokens: 800,
           messages: [{ role: "system", content: systemPrompt }, ...messages]
         })
       });

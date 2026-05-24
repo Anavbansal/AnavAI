@@ -2,6 +2,91 @@ import React, { useState } from 'react'
 import { searchMutualFunds, getMutualFundNAV } from '../services/marketData'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 
+// ─── Mutual Fund Analysis Engine ─────────────────────────────────────────────
+function analyzeFund(chartData) {
+  if (!chartData || chartData.length < 10) return null
+  const len = chartData.length
+  const navs = chartData.map(d => d.nav)
+  const current = navs[len - 1]
+
+  function cagr(years) {
+    const idx = Math.max(0, len - Math.round(years * 365))
+    const start = navs[idx]
+    if (!start || !current) return null
+    return (Math.pow(current / start, 1 / years) - 1) * 100
+  }
+
+  // Volatility (annualized std dev of daily returns)
+  function volatility(days = 252) {
+    const slice = navs.slice(-Math.min(days, len))
+    if (slice.length < 5) return null
+    const returns = slice.slice(1).map((v, i) => Math.log(v / slice[i]))
+    const mean = returns.reduce((a, b) => a + b, 0) / returns.length
+    const variance = returns.reduce((s, r) => s + (r - mean) ** 2, 0) / returns.length
+    return Math.sqrt(variance * 252) * 100
+  }
+
+  // Simple moving averages
+  function sma(period) {
+    const slice = navs.slice(-Math.min(period, len))
+    return slice.reduce((a, b) => a + b, 0) / slice.length
+  }
+
+  const cagr1y  = cagr(1)
+  const cagr3y  = cagr(3)
+  const cagr5y  = cagr(5)
+  const vol     = volatility()
+  const sma50   = sma(50)
+  const sma200  = sma(200)
+  const trendUp = current > sma50 && sma50 > sma200
+
+  // Drawdown from peak
+  const recentPeak = Math.max(...navs.slice(-252))
+  const drawdown = recentPeak > 0 ? ((current - recentPeak) / recentPeak) * 100 : 0
+
+  // Consistency: count positive months
+  const monthlyReturns = []
+  for (let i = 30; i < len; i += 30) {
+    const r = (navs[i] - navs[i - 30]) / navs[i - 30] * 100
+    monthlyReturns.push(r)
+  }
+  const posMonths = monthlyReturns.filter(r => r > 0).length
+  const consistency = monthlyReturns.length > 0 ? Math.round((posMonths / monthlyReturns.length) * 100) : null
+
+  // ── Buy/Hold/Sell Suggestion ──
+  let score = 50
+  if (cagr1y !== null) {
+    if (cagr1y > 20) score += 15
+    else if (cagr1y > 12) score += 8
+    else if (cagr1y < 0) score -= 15
+    else if (cagr1y < 6) score -= 8
+  }
+  if (trendUp) score += 12
+  else score -= 12
+  if (drawdown < -15) score -= 10
+  else if (drawdown > -5) score += 5
+  if (vol !== null) {
+    if (vol > 25) score -= 8
+    else if (vol < 12) score += 8
+  }
+  if (consistency !== null) {
+    if (consistency > 65) score += 8
+    else if (consistency < 40) score -= 8
+  }
+
+  score = Math.max(0, Math.min(100, score))
+
+  let suggestion, suggColor, risk
+  if (score >= 65) { suggestion = 'BUY / SIP'; suggColor = '#00ff88'; risk = vol > 20 ? 'HIGH' : 'MODERATE' }
+  else if (score <= 35) { suggestion = 'AVOID / EXIT'; suggColor = '#ff3366'; risk = 'HIGH' }
+  else { suggestion = 'HOLD / WAIT'; suggColor = '#ffd700'; risk = vol > 20 ? 'MODERATE-HIGH' : 'MODERATE' }
+
+  return {
+    cagr1y, cagr3y, cagr5y, vol, sma50, sma200, trendUp,
+    drawdown, consistency, score, suggestion, suggColor, risk,
+  }
+}
+
 export default function MutualFunds() {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
@@ -26,7 +111,7 @@ export default function MutualFunds() {
     setLoadingNAV(false)
   }
 
-  const chartData = navData?.data?.slice(0, 180).reverse().map(d => ({
+  const chartData = navData?.data?.slice(0, 365 * 5).reverse().map(d => ({
     date: d.date,
     nav: parseFloat(d.nav),
   })) ?? []
@@ -37,18 +122,9 @@ export default function MutualFunds() {
   const navChangePct = prevNAV > 0 ? (navChange / prevNAV) * 100 : 0
   const bull = navChange >= 0
 
-  // CAGR calc
-  function cagr(data, years) {
-    if (data.length < 2) return null
-    const idx = Math.max(0, data.length - Math.round(years * 365))
-    const startNAV = data[idx]?.nav ?? data[0].nav
-    const endNAV = data[data.length - 1]?.nav
-    if (!startNAV || !endNAV) return null
-    return (Math.pow(endNAV / startNAV, 1 / years) - 1) * 100
-  }
-
-  const cagr1Y = cagr(chartData, 1)
-  const cagr3Y = cagr(chartData, 3)
+  const analysis = analyzeFund(chartData)
+  const cagr1Y = analysis?.cagr1y
+  const cagr3Y = analysis?.cagr3y
 
   return (
     <div className="panel animate-fadein">
@@ -111,15 +187,43 @@ export default function MutualFunds() {
 
             {!loadingNAV && chartData.length > 0 && (
               <>
+                {/* AI Suggestion Banner */}
+                {analysis && (
+                  <div style={{
+                    background: `${analysis.suggColor}18`,
+                    border: `1px solid ${analysis.suggColor}55`,
+                    borderRadius: 8, padding: '10px 14px',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  }}>
+                    <div>
+                      <div className="font-mono" style={{ fontSize: 9, color: '#888', letterSpacing: 2 }}>AI SUGGESTION</div>
+                      <div className="font-display font-bold" style={{ fontSize: 18, color: analysis.suggColor, letterSpacing: 2 }}>
+                        {analysis.suggestion}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div className="font-mono" style={{ fontSize: 9, color: '#888' }}>SCORE</div>
+                      <div className="font-display font-bold" style={{ fontSize: 22, color: analysis.suggColor }}>{analysis.score}</div>
+                      <div className="font-mono" style={{ fontSize: 9, color: '#888' }}>/100</div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-3 gap-px" style={{ background: '#1a3050' }}>
                   {[
                     { label: 'CURRENT NAV', val: `₹${Number(currentNAV).toFixed(4)}`, color: bull ? '#00ff88' : '#ff3366' },
-                    { label: '1Y CAGR', val: cagr1Y ? `${cagr1Y.toFixed(2)}%` : 'N/A', color: cagr1Y > 0 ? '#00ff88' : '#ff3366' },
-                    { label: '3Y CAGR', val: cagr3Y ? `${cagr3Y.toFixed(2)}%` : 'N/A', color: cagr3Y > 0 ? '#00ff88' : '#ff3366' },
+                    { label: '1Y CAGR', val: cagr1Y != null ? `${cagr1Y.toFixed(2)}%` : 'N/A', color: cagr1Y > 0 ? '#00ff88' : '#ff3366' },
+                    { label: '3Y CAGR', val: cagr3Y != null ? `${cagr3Y.toFixed(2)}%` : 'N/A', color: cagr3Y > 0 ? '#00ff88' : '#ff3366' },
+                    { label: '5Y CAGR', val: analysis?.cagr5y != null ? `${analysis.cagr5y.toFixed(2)}%` : 'N/A', color: (analysis?.cagr5y ?? 0) > 0 ? '#00ff88' : '#ff3366' },
+                    { label: 'VOLATILITY', val: analysis?.vol != null ? `${analysis.vol.toFixed(1)}%` : 'N/A', color: (analysis?.vol ?? 0) < 15 ? '#00ff88' : (analysis?.vol ?? 0) < 25 ? '#ffd700' : '#ff3366' },
+                    { label: 'MAX DRAWDOWN', val: analysis?.drawdown != null ? `${analysis.drawdown.toFixed(1)}%` : 'N/A', color: (analysis?.drawdown ?? 0) > -10 ? '#00ff88' : '#ff3366' },
+                    { label: 'CONSISTENCY', val: analysis?.consistency != null ? `${analysis.consistency}%` : 'N/A', color: (analysis?.consistency ?? 0) > 60 ? '#00ff88' : '#ffd700' },
+                    { label: 'TREND', val: analysis?.trendUp ? 'ABOVE MA' : 'BELOW MA', color: analysis?.trendUp ? '#00ff88' : '#ff3366' },
+                    { label: 'RISK LEVEL', val: analysis?.risk || 'N/A', color: analysis?.risk === 'HIGH' ? '#ff3366' : analysis?.risk === 'MODERATE' ? '#ffd700' : '#00ff88' },
                   ].map(m => (
                     <div key={m.label} className="bg-panel p-3 text-center">
-                      <div className="font-mono text-dim" style={{ fontSize: 10 }}>{m.label}</div>
-                      <div className="font-display font-bold mt-1" style={{ fontSize: 13, color: m.color }}>{m.val}</div>
+                      <div className="font-mono text-dim" style={{ fontSize: 9 }}>{m.label}</div>
+                      <div className="font-display font-bold mt-1" style={{ fontSize: 12, color: m.color }}>{m.val}</div>
                     </div>
                   ))}
                 </div>

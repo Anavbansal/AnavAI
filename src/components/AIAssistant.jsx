@@ -22,25 +22,40 @@ export default function AIAssistant({ data, ai }) {
     }
   }, [open, messages])
 
-  // Build context from current analysis data
+  // Build rich context from current analysis data
   const buildContext = () => {
     if (!data) return {}
     return {
-      symbol:     data.symbol,
-      price:      data.price,
-      vwap:       data.vwap,
-      ema20:      data.ema20,
-      rsi:        data.rsi,
-      regime:     data.regime,
-      verdict:    ai?.verdict,
-      confidence: ai?.confidence,
-      entry:      ai?.entry,
-      target:     ai?.target,
-      stopLoss:   ai?.stopLoss,
-      riskReward: ai?.riskReward,
+      symbol:           data.symbol,
+      price:            data.price,
+      vwap:             data.vwap,
+      ema20:            data.ema20,
+      ema50:            data.ema50,
+      ema9:             data.ema9,
+      ema200:           data.ema200,
+      rsi:              data.rsi,
+      regime:           data.regime,
+      atr:              data.atr,
+      macd:             data.macd,
+      bb:               data.bb,
+      supertrend:       data.supertrend,
+      ichimoku:         data.ichimoku,
+      pcr:              data.pcr,
+      volumeRatio:      data.volumeRatio,
       trendConsistency: data.trendConsistency,
-      support:    data.support,
-      resistance: data.resistance,
+      support:          data.support,
+      resistance:       data.resistance,
+      m1Trend:          data.m1Trend,
+      m5Trend:          data.m5Trend,
+      m15Trend:         data.m15Trend,
+      verdict:          ai?.verdict,
+      confidence:       ai?.confidence,
+      entry:            ai?.entry,
+      target:           ai?.target,
+      stopLoss:         ai?.stopLoss,
+      riskReward:       ai?.riskReward,
+      score:            ai?.score,
+      optionSuggestion: ai?.optionSuggestion,
     }
   }
 
@@ -82,11 +97,13 @@ export default function AIAssistant({ data, ai }) {
   }
 
   const QUICK = [
-    'Should I buy or sell now?',
-    'What is the risk/reward?',
-    'Explain the current regime',
-    'Best F&O strategy here?',
-    'Where is the next resistance?',
+    'Should I buy or sell now? Give entry, target and SL.',
+    'What is the risk/reward and position sizing?',
+    'Explain the current market regime in detail.',
+    'Best F&O strategy for this setup? Suggest strikes.',
+    'Where is the next key support and resistance?',
+    'Is this a trend or reversal setup?',
+    'What do RSI and MACD tell about momentum?',
   ]
 
   return (

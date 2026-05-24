@@ -47,13 +47,17 @@ export default function NewsPanel({ symbol, instrumentKey, news: backendNews = [
         const res = await getMarketNews(token, { category: 'instrument_keys', instrument_keys: key });
         
         if (isMounted && res?.status === 'success' && res?.data) {
-          // Extract articles for this instrument key
+          // Handle both Upstox format and Google RSS fallback format
           // Response format: { data: { [instrument_key]: [...articles], ... }, ... }
-          const articles = res.data[key] || Object.values(res.data)?.[0] || [];
+          let articles = res.data[key] || Object.values(res.data)?.[0] || [];
+          // RSS fallback uses the raw key string as property
+          if (!Array.isArray(articles) || articles.length === 0) {
+            const firstVal = Object.values(res.data || {})[0];
+            articles = Array.isArray(firstVal) ? firstVal : [];
+          }
           if (Array.isArray(articles) && articles.length > 0) {
             setUpstoxNews(articles);
           } else {
-            console.warn('No articles found in response for key:', key);
             setUpstoxNews([]);
           }
         }
@@ -77,11 +81,18 @@ export default function NewsPanel({ symbol, instrumentKey, news: backendNews = [
           ? Math.max(0, Math.round((Date.now() - publishedMs) / 60000))
           : NaN
 
+        const title = item?.heading ?? item?.title ?? 'Market update';
+        const titleLower = title.toLowerCase();
+        let sentiment = 'NEUTRAL';
+        const bullishKw = ['surge', 'rally', 'gain', 'rise', 'profit', 'record', 'high', 'buy', 'upgrade', 'beat', 'growth', 'strong', 'outperform'];
+        const bearishKw = ['fall', 'drop', 'crash', 'loss', 'decline', 'sell', 'downgrade', 'miss', 'weak', 'concern', 'risk', 'cut', 'slump'];
+        if (bullishKw.some(k => titleLower.includes(k))) sentiment = 'BULLISH';
+        else if (bearishKw.some(k => titleLower.includes(k))) sentiment = 'BEARISH';
         return {
           id: item?.id ?? `upstox-news-${index}`,
-          title: item?.heading ?? item?.title ?? 'Market update',
-          source: item?.source ?? 'Upstox',
-          sentiment: 'NEUTRAL',
+          title,
+          source: item?.source ?? 'News',
+          sentiment,
           mins,
           url: item?.article_link ?? item?.url ?? null,
           thumbnail: item?.thumbnail ?? null,
