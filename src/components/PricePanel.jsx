@@ -78,9 +78,12 @@ export default function PricePanel({ data, loading }) {
       {/* Advanced indicators row */}
       <div className="grid grid-cols-2 gap-px border-t border-border" style={{background:'#1a3050'}}>
         {[
-          {label:'EMA 50',  val:`₹${fmt(data.ema50||0)}`, color:data.price>data.ema50?'#00ff88':'#ff3366'},
-          {label:'SUPERTREND', val:data.supertrend?.direction==='up'?'▲ BULL':'▼ BEAR',
-            color:data.supertrend?.direction==='up'?'#00ff88':'#ff3366'},
+          {label:'EMA 50',     val:`₹${fmt(data.ema50||0)}`,  color:data.price>data.ema50?'#00ff88':'#ff3366'},
+          {label:'SUPERTREND', val:data.supertrend?.direction==='up'?'▲ BULL':'▼ BEAR', color:data.supertrend?.direction==='up'?'#00ff88':'#ff3366'},
+          {label:'ADX',        val:(data.adx?.adx||0).toFixed(1), color:(data.adx?.adx||0)>30?'#00ff88':(data.adx?.adx||0)>20?'#ffd700':'#ff3366'},
+          {label:'STOCH RSI',  val:(data.stochRSI||50).toFixed(1), color:(data.stochRSI||50)>80?'#ff3366':(data.stochRSI||50)<20?'#00ff88':'#ffd700'},
+          {label:'OBV TREND',  val:data.obvTrend||'N/A', color:data.obvTrend==='RISING'?'#00ff88':data.obvTrend==='FALLING'?'#ff3366':'#ffd700'},
+          {label:'52W HIGH',   val:data.high52w?`₹${fmt(data.high52w,0)}`:'N/A', color:'#c8dff0'},
         ].map(m=>(
           <div key={m.label} className="metric-cell">
             <div className="metric-label">{m.label}</div>

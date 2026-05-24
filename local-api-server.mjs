@@ -507,8 +507,9 @@ async function fetchRealCandles(token, instrumentKey, resolution, mode = "tech")
 
     if (isDaily || isDelivery) {
       // DELIVERY / Daily — V3 Historical API
+      // Fetch max 2 years of daily data so frontend period selectors (10D/30D/11W/1Y/2Y) all work
       const today = new Date().toISOString().slice(0, 10);
-      const from  = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
+      const from  = new Date(Date.now() - 730 * 86400000).toISOString().slice(0, 10); // 2 years
       const histRes = isDelivery ? "D" : r;
       try {
         const candles = await UpstoxAPI.getHistoricalCandles(instrumentKey, histRes, today, from, token);
@@ -534,10 +535,10 @@ async function fetchRealCandles(token, instrumentKey, resolution, mode = "tech")
       console.warn(`[V3 Intraday] failed for ${instrumentKey}:`, e.message);
     }
 
-    // FALLBACK — V3 Historical with 30-day window
+    // FALLBACK — V3 Historical with 77-day window (covers 11 weeks)
     try {
       const today = new Date().toISOString().slice(0, 10);
-      const from  = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+      const from  = new Date(Date.now() - 77 * 86400000).toISOString().slice(0, 10); // 11 weeks
       const candles = await UpstoxAPI.getHistoricalCandles(instrumentKey, r, today, from, token);
       if (candles && candles.length > 0) {
         console.log(`[V3 Hist-fallback] ${candles.length} candles for ${instrumentKey}`);
@@ -632,17 +633,107 @@ async function buildRealAnalyzePayload(symbol, candles, ltpOverride, mode = "tec
   const supertrend = calcSupertrend(candles);
   const ichimoku   = calcIchimoku(candles);
 
-  const support    = +Math.min(...candles.slice(-20).map(c=>c.low)).toFixed(2);
-  const resistance = +Math.max(...candles.slice(-20).map(c=>c.high)).toFixed(2);
+  // Dynamic lookback: delivery/fo gets wider view
+  const lookback = mode === 'delivery' ? 60 : mode === 'fo' ? 40 : 20;
+  const volLookback = Math.min(candles.length, 20);
 
-  const avgVolume  = candles.slice(-20).reduce((s,c)=>s+c.volume,0)/Math.min(candles.length,20);
+  // Pivot-based support/resistance (more accurate than simple min/max)
+  function calcPivotLevels(cands, lb) {
+    const slice = cands.slice(-lb);
+    const lows = slice.map(c => c.low);
+    const highs = slice.map(c => c.high);
+    // Find swing lows/highs using local minima/maxima (3-bar pivot)
+    const swingLows = [], swingHighs = [];
+    for (let i = 1; i < slice.length - 1; i++) {
+      if (lows[i] < lows[i-1] && lows[i] < lows[i+1]) swingLows.push(lows[i]);
+      if (highs[i] > highs[i-1] && highs[i] > highs[i+1]) swingHighs.push(highs[i]);
+    }
+    const support    = swingLows.length  > 0 ? +Math.min(...swingLows).toFixed(2)  : +Math.min(...lows).toFixed(2);
+    const resistance = swingHighs.length > 0 ? +Math.max(...swingHighs).toFixed(2) : +Math.max(...highs).toFixed(2);
+    return { support, resistance };
+  }
+  const { support, resistance } = calcPivotLevels(candles, lookback);
+
+  // 52-week high/low for delivery
+  const yearSlice = candles.slice(-365);
+  const high52w = +Math.max(...yearSlice.map(c => c.high)).toFixed(2);
+  const low52w  = +Math.min(...yearSlice.map(c => c.low)).toFixed(2);
+
+  const avgVolume  = candles.slice(-volLookback).reduce((s,c)=>s+c.volume,0)/volLookback;
   const volumeRatio= avgVolume ? +(latest.volume / avgVolume).toFixed(2) : 1;
 
-  const m1Trend  = summarizeTrend(candles, 3);
-  const m5Trend  = summarizeTrend(candles, 8);
-  const m15Trend = summarizeTrend(candles, 20);
+  // Trend using EMA slopes (more accurate than close comparison)
+  function emaTrend(closes, period, lookbackBars = 3) {
+    const series = calcEMASeries(closes, period);
+    const last = series[series.length - 1];
+    const prev = series[series.length - 1 - lookbackBars];
+    if (!prev) return 'SIDEWAYS';
+    const slope = (last - prev) / Math.max(prev, 1) * 100;
+    if (slope > 0.08) return 'BULLISH';
+    if (slope < -0.08) return 'BEARISH';
+    return 'SIDEWAYS';
+  }
+  const m1Trend  = emaTrend(closes, 9, 2);
+  const m5Trend  = emaTrend(closes, 20, 5);
+  const m15Trend = emaTrend(closes, 50, 10);
   const trendConsistency = m1Trend===m5Trend && m5Trend===m15Trend && m1Trend!=="SIDEWAYS" ? "CONFIRMED" : "DIVERGENT";
   const regime   = classifyRegime(price, ema20, ema50, atr, volumeRatio);
+
+  // Stochastic RSI for better overbought/oversold accuracy
+  function calcStochRSI(closes, rsiPeriod=14, stochPeriod=14) {
+    const rsiSeries = [];
+    let gains = 0, losses = 0;
+    for (let i = 1; i <= rsiPeriod; i++) {
+      const diff = closes[i] - closes[i-1];
+      if (diff > 0) gains += diff; else losses -= diff;
+    }
+    let avgGain = gains/rsiPeriod, avgLoss = losses/rsiPeriod;
+    rsiSeries.push(100 - 100/(1 + (avgLoss === 0 ? 999 : avgGain/avgLoss)));
+    for (let i = rsiPeriod+1; i < closes.length; i++) {
+      const diff = closes[i] - closes[i-1];
+      avgGain = (avgGain*(rsiPeriod-1) + Math.max(diff,0))/rsiPeriod;
+      avgLoss = (avgLoss*(rsiPeriod-1) + Math.max(-diff,0))/rsiPeriod;
+      rsiSeries.push(100 - 100/(1 + (avgLoss === 0 ? 999 : avgGain/avgLoss)));
+    }
+    if (rsiSeries.length < stochPeriod) return 50;
+    const slice = rsiSeries.slice(-stochPeriod);
+    const rsiMax = Math.max(...slice), rsiMin = Math.min(...slice);
+    return rsiMax === rsiMin ? 50 : ((rsiSeries[rsiSeries.length-1] - rsiMin)/(rsiMax-rsiMin))*100;
+  }
+  const stochRSI = +calcStochRSI(closes).toFixed(2);
+
+  // ADX (Average Directional Index) for trend strength
+  function calcADX(cands, period=14) {
+    if (cands.length < period+1) return { adx: 25, plusDI: 15, minusDI: 15 };
+    const slice = cands.slice(-(period*2));
+    const trArr=[], plusDMArr=[], minusDMArr=[];
+    for (let i=1;i<slice.length;i++) {
+      const c=slice[i], p=slice[i-1];
+      trArr.push(Math.max(c.high-c.low, Math.abs(c.high-p.close), Math.abs(c.low-p.close)));
+      plusDMArr.push(c.high-p.high > p.low-c.low && c.high-p.high > 0 ? c.high-p.high : 0);
+      minusDMArr.push(p.low-c.low > c.high-p.high && p.low-c.low > 0 ? p.low-c.low : 0);
+    }
+    const atr14 = trArr.slice(-period).reduce((a,b)=>a+b,0)/period;
+    const plusDI = atr14 > 0 ? (plusDMArr.slice(-period).reduce((a,b)=>a+b,0)/period)/atr14*100 : 0;
+    const minusDI = atr14 > 0 ? (minusDMArr.slice(-period).reduce((a,b)=>a+b,0)/period)/atr14*100 : 0;
+    const dx = Math.abs(plusDI-minusDI)/((plusDI+minusDI)||1)*100;
+    return { adx: +dx.toFixed(2), plusDI: +plusDI.toFixed(2), minusDI: +minusDI.toFixed(2) };
+  }
+  const adx = calcADX(candles, 14);
+
+  // OBV (On Balance Volume) trend
+  function calcOBV(cands) {
+    let obv = 0;
+    const series = [0];
+    for (let i=1;i<cands.length;i++) {
+      if (cands[i].close > cands[i-1].close) obv += cands[i].volume;
+      else if (cands[i].close < cands[i-1].close) obv -= cands[i].volume;
+      series.push(obv);
+    }
+    const last5 = series.slice(-5);
+    return { obv, trend: last5[4] > last5[0] ? 'RISING' : last5[4] < last5[0] ? 'FALLING' : 'FLAT' };
+  }
+  const obvData = calcOBV(candles);
 
   const clean = String(symbol).trim().toUpperCase().replace(/^NSE:/i,"").replace(/-EQ|-INDEX/gi,"");
   const isIndex = ["NIFTY","NIFTY50","BANKNIFTY","FINNIFTY","MIDCPNIFTY"].includes(clean);
@@ -759,11 +850,15 @@ Support: ₹${support} | Resistance: ₹${resistance} | ATR: ₹${atr.toFixed(2)
 Volume Ratio: ${volumeRatio.toFixed(2)}x | PCR: ${pcr} | Regime: ${regime}
 Timeframes: M1=${m1Trend} M5=${m5Trend} M15=${m15Trend} | Consistency: ${trendConsistency}
 Candle Patterns: ${candlePatterns.length > 0 ? candlePatterns.join(', ') : 'None'}
+StochRSI: ${stochRSI} | ADX: ${adx.adx} (+DI:${adx.plusDI} -DI:${adx.minusDI}) | OBV Trend: ${obvData.trend}
+52W High: ₹${high52w} | 52W Low: ₹${low52w} | From 52W High: ${((price-high52w)/high52w*100).toFixed(2)}%
 
 DECISION RULES:
-- BUY: price>VWAP + price>EMA20 + MACD histogram>0 + RSI 40-68 + Supertrend UP + M5+M15 BULLISH
-- SELL: price<VWAP + price<EMA20 + MACD histogram<0 + RSI 32-60 + Supertrend DOWN + M5+M15 BEARISH
-- HOLD: divergent signals, RSI extreme without reversal, HIGH_VOL_CHOP regime
+- BUY: price>VWAP + price>EMA20 + MACD histogram>0 + RSI 40-70 + Supertrend UP + ADX>20 + M5+M15 BULLISH + OBV RISING
+- SELL: price<VWAP + price<EMA20 + MACD histogram<0 + RSI 30-60 + Supertrend DOWN + ADX>20 + M5+M15 BEARISH + OBV FALLING
+- HOLD: ADX<20 (no trend), trendConsistency=DIVERGENT, StochRSI extreme (>90 or <10) without candle reversal, HIGH_VOL_CHOP
+- STRONG BUY: All BUY conditions + ADX>30 + StochRSI<20 (oversold bounce) + bullish candle pattern
+- STRONG SELL: All SELL conditions + ADX>30 + StochRSI>80 (overbought) + bearish candle pattern
 - Entry: optimal level (not always current price)
 - SL: below nearest support or supertrend value
 - Target: nearest resistance or R:R > 1.5x
@@ -860,6 +955,11 @@ Return this exact JSON:
     supertrend,
     ichimoku,
     foGreeks,
+    adx,
+    stochRSI,
+    obvTrend: obvData.trend,
+    high52w,
+    low52w,
     analysis: aiAnalysis.summary,
     aiAnalysis,
     latestNews: [],
