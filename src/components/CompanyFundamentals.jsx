@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { searchSymbol } from '../services/marketData'
+import { getInstrumentBySymbol } from '../utils/instrumentSearch'
 import { getCompanyFundamentals } from '../lib/api'
 
 const RATIO_LABELS = {
@@ -39,12 +39,9 @@ export default function CompanyFundamentals({ symbol }) {
         setProfile(null);
         setRatios(null);
 
-        // The Upstox Fundamentals API relies on ISINs, we extract this using our search API
-        const searchRes = await searchSymbol(symbol);
-        const match = searchRes.find(r => 
-          r.symbol === symbol || r.tradingSymbol === symbol || r.name?.toUpperCase().includes(symbol)
-        );
-        const isin = match?.isin || match?.info?.isin;
+        // Get instrument details from complete.json which includes ISIN
+        const instrument = getInstrumentBySymbol(symbol);
+        const isin = instrument?.isin;
 
         if (!isin) {
           throw new Error(`ISIN not found for ${symbol}. Fundamentals require an ISIN.`);

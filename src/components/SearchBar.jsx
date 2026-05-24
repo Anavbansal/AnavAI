@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { searchSymbol } from '../services/marketData'
+import { searchInstruments, getInstrumentBySymbol } from '../utils/instrumentSearch'
 
 const QUICK = [
   { label:'NIFTY 50',   sym:'NIFTY' },
@@ -31,19 +31,17 @@ export default function SearchBar({ onAnalyze, loading }) {
   useEffect(() => {
     let cancelled = false
     const q = symbol.trim()
-    if (q.length < 2) {
+    if (q.length < 1) {
       setSuggestions([])
       return
     }
 
-    const timer = setTimeout(async () => {
-      try {
-        const matches = await searchSymbol(q)
-        if (!cancelled) setSuggestions(matches.slice(0, 8))
-      } catch {
-        if (!cancelled) setSuggestions([])
+    const timer = setTimeout(() => {
+      if (!cancelled) {
+        const matches = searchInstruments(q)
+        setSuggestions(matches)
       }
-    }, 200)
+    }, 100)
 
     return () => {
       cancelled = true
@@ -55,14 +53,18 @@ export default function SearchBar({ onAnalyze, loading }) {
     const raw = typeof input === 'string' ? input : input?.tradingSymbol || input?.symbol || ''
     const clean = raw.trim().toUpperCase()
     if (!clean) return
+    
     setSymbol(clean)
     setSuggestions([])
     setShowSug(false)
-    if (typeof input === 'string') {
-      onAnalyze(clean, t)
-      return
-    }
-    onAnalyze({ symbol: clean, instrumentKey: input?.instrumentKey || '' }, t)
+    
+    // Get instrument details including instrumentKey
+    const instrument = getInstrumentBySymbol(clean) || { symbol: clean, instrumentKey: '' }
+    
+    onAnalyze({
+      symbol: clean,
+      instrumentKey: instrument.instrumentKey || ''
+    }, t)
   }
 
   function pickSuggestion(item) {

@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react'
 import { getMarketNews } from '../lib/api'
-import { searchSymbol } from '../services/marketData'
+import { getInstrumentBySymbol } from '../utils/instrumentSearch'
 
 const SENTIMENT_STYLES = {
   BULLISH: { color: '#00ff88', bg: 'rgba(0,255,136,0.12)', border: 'rgba(0,255,136,0.3)' },
@@ -30,24 +30,31 @@ export default function NewsPanel({ symbol, instrumentKey, news: backendNews = [
         setLoading(true);
         let key = instrumentKey;
 
-        // Try to obtain the exact instrument_key from Upstox via search if omitted
+        // Get the exact instrument_key from complete.json if not provided
         if (!key && symbol) {
-          const results = await searchSymbol(symbol);
-          const match = results.find(r => r.symbol === symbol || r.symbol?.includes(symbol));
-          if (match && (match.instrument_key || match.instrumentKey)) {
-            key = match.instrument_key || match.instrumentKey;
+          const instrument = getInstrumentBySymbol(symbol);
+          if (instrument?.instrumentKey) {
+            key = instrument.instrumentKey;
           }
         }
 
-        if (!key) return; // Fallback entirely to backendNews if key is still missing
+        if (!key) {
+          console.warn('No instrumentKey found for symbol:', symbol);
+          return;
+        }
 
         const token = localStorage.getItem('upstox_access_token') || null;
         const res = await getMarketNews(token, { category: 'instrument_keys', instrument_keys: key });
         
-        if (isMounted && res.status === 'success' && res.data) {
-          const articles = Array.isArray(res.data) ? res.data : (res.data[key] || Object.values(res.data)[0]);
-          if (Array.isArray(articles)) {
+        if (isMounted && res?.status === 'success' && res?.data) {
+          // Extract articles for this instrument key
+          // Response format: { data: { [instrument_key]: [...articles], ... }, ... }
+          const articles = res.data[key] || Object.values(res.data)?.[0] || [];
+          if (Array.isArray(articles) && articles.length > 0) {
             setUpstoxNews(articles);
+          } else {
+            console.warn('No articles found in response for key:', key);
+            setUpstoxNews([]);
           }
         }
       } catch (err) {
@@ -64,20 +71,21 @@ export default function NewsPanel({ symbol, instrumentKey, news: backendNews = [
   const news = useMemo(() => {
     if (upstoxNews && upstoxNews.length > 0) {
       return upstoxNews.slice(0, 7).map((item, index) => {
-        // Unify timestamp structures from the Upstox API
-        const ts = item?.publishedAt || item?.published_timestamp || item?.timestamp || Date.now();
-        const publishedMs = Number(ts) > 1e11 ? Number(ts) : new Date(ts).getTime();
+        // Upstox API returns published_time as Unix timestamp in milliseconds
+        const publishedMs = Number(item?.published_time) || Date.now();
         const mins = Number.isFinite(publishedMs)
           ? Math.max(0, Math.round((Date.now() - publishedMs) / 60000))
           : NaN
 
         return {
           id: item?.id ?? `upstox-news-${index}`,
-          title: item?.headline ?? item?.title ?? 'Market update',
+          title: item?.heading ?? item?.title ?? 'Market update',
           source: item?.source ?? 'Upstox',
-          sentiment: 'NEUTRAL', // Native Upstox API lacks sentiment tagging out-of-the-box
+          sentiment: 'NEUTRAL',
           mins,
-          url: item?.link ?? item?.url ?? null,
+          url: item?.article_link ?? item?.url ?? null,
+          thumbnail: item?.thumbnail ?? null,
+          summary: item?.summary ?? null,
         }
       })
     }
@@ -95,9 +103,11 @@ export default function NewsPanel({ symbol, instrumentKey, news: backendNews = [
         sentiment: item?.sentiment ?? 'NEUTRAL',
         mins,
         url: item?.url ?? null,
+        thumbnail: item?.thumbnail ?? null,
+        summary: item?.summary ?? null,
       }
     })
-  }, [backendNews])
+  }, [upstoxNews, backendNews])
 
   return (
     <div className="panel animate-fadein">

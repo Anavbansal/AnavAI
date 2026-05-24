@@ -1,5 +1,5 @@
 /**
- * UPSTOX SDK CLIENT — Secure wrapper for Upstox API
+ * UPSTOX API CLIENT — Secure wrapper for Upstox API
  * Replaced the official SDK with direct fetch() calls because the SDK 
  * relies on callbacks and has poor Promise support.
  * All credentials managed via environment variables (.env)
@@ -59,7 +59,7 @@ function initializeClients(token) {
 }
 
 /**
- * Get initialized clients (kept for compatibility with local-api-server.mjs)
+ * Get initialized clients (kept for compatibility)
  * @param {string} token - Optional token override
  * @returns {object} Empty object as SDK clients are deprecated
  */
@@ -70,7 +70,7 @@ function getClients(token) {
     throw new Error('No access token available. Provide token or set UPSTOX_SANDBOX_ACCESS_TOKEN in .env')
   }
 
-  // We no longer use the SDK client objects.
+  // We no longer use the official client objects.
   return {}
 }
 
@@ -133,7 +133,7 @@ export async function getIntradayCandles(instrumentKey, interval = '5', token) {
     const { unit, ivl } = resolveIntradayInterval(interval)
     const encodedKey = encodeURIComponent(instrumentKey)
     const path = `/v3/historical-candle/intraday/${encodedKey}/${unit}/${ivl}`
-    console.log(`[SDK] V3 Intraday: GET ${path}`)
+    console.log(`[UpstoxAPI] V3 Intraday: GET ${path}`)
     const response = await upstoxFetch(path, token)
 
     const candles = response?.data?.candles || []
@@ -186,7 +186,7 @@ export async function getHistoricalCandles(instrumentKey, interval = 'day', toDa
     let path = `/v3/historical-candle/${encodedKey}/${unit}/${ivl}/${encodeURIComponent(toDate)}`
     if (fromDate) path += `/${encodeURIComponent(fromDate)}`
 
-    console.log(`[SDK] V3 Historical: GET ${path}`)
+    console.log(`[UpstoxAPI] V3 Historical: GET ${path}`)
     const response = await upstoxFetch(path, token)
 
     const candles = response?.data?.candles || []
@@ -294,18 +294,24 @@ export async function searchInstruments(query, options = {}, token) {
 
   try {
     const params = new URLSearchParams()
-    params.append('search_string', query)
+    params.append('query', query)
     
-    if (options.exchanges) params.append('exchange', options.exchanges)
-    if (options.segments) params.append('segment', options.segments)
-    if (options.instrumentTypes) params.append('instrument_type', options.instrumentTypes)
+    if (options.exchanges) params.append('exchanges', options.exchanges)
+    if (options.segments) params.append('segments', options.segments)
+    if (options.instrumentTypes) params.append('instrument_types', options.instrumentTypes)
     if (options.pageNumber) params.append('page_number', options.pageNumber)
     if (options.records) params.append('records', options.records)
+    if (options.expiry) params.append('expiry', options.expiry)
+    if (options.atmOffset !== undefined) params.append('atm_offset', options.atmOffset)
 
     const path = `/v2/instruments/search?${params.toString()}`
     const response = await upstoxFetch(path, token)
     
-    const results = response?.data || []
+    let results = response?.data || []
+    if (results && !Array.isArray(results)) {
+      results = Array.isArray(results.instruments) ? results.instruments : []
+    }
+
     console.log(`✓ Search found ${results.length} instruments matching "${query}"`)
     return results
   } catch (err) {
@@ -326,6 +332,44 @@ export async function getProfile(token) {
     return response?.data
   } catch (err) {
     console.error(`✗ Profile fetch failed:`, err.message)
+    throw err
+  }
+}
+
+/**
+ * Get news for instruments, positions, or holdings
+ * @param {object} options - { category, instrument_keys, page_number, page_size }
+ * @param {string} token - Optional token override
+ * @returns {object} News data
+ */
+export async function getNews(options = {}, token) {
+  try {
+    const { category = 'instrument_keys', instrument_keys, page_number = 1, page_size = 20 } = options
+    
+    if (!category) throw new Error('category is required')
+
+    const tokenToUse = token || currentAccessToken || CONFIG.accessToken
+    if (!tokenToUse) {
+      console.warn(`[UpstoxAPI News] No token provided - using fallback`)
+    }
+    
+    const params = new URLSearchParams({
+      category,
+      page_number,
+      page_size,
+    })
+    
+    if (instrument_keys) {
+      params.set('instrument_keys', instrument_keys)
+    }
+
+    console.log(`[UpstoxAPI News] Fetching with token length: ${tokenToUse?.length || 0}, Category: ${category}`)
+    
+    const response = await upstoxFetch(`/v2/news?${params.toString()}`, tokenToUse)
+    console.log(`✓ Fetched news (${category})`)
+    return response
+  } catch (err) {
+    console.error(`✗ News fetch failed:`, err.message)
     throw err
   }
 }
@@ -437,7 +481,7 @@ export function getAuthorizationUrl(redirectUri, state) {
 }
 
 /**
- * Get SDK configuration status
+ * Get API configuration status
  * @returns {object} Configuration and validation info
  */
 export function getConfigStatus() {

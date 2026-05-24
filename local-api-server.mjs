@@ -1,7 +1,7 @@
 /**
  * ANAV PRO — Local API Server
  * Connects to real Upstox V2/V3 APIs via Upstox SDK for live market data.
- * Uses secure SDK client wrapper (upstox-sdk-client.mjs) for all API calls.
+ * Uses secure API client wrapper (upstox-sdk-client.mjs) for all API calls.
  * All sensitive data managed via environment variables (.env).
  */
 
@@ -9,7 +9,7 @@ import http from "node:http";
 import { URL } from "node:url";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
-import * as UpstoxSDK from "./upstox-sdk-client.mjs";
+import * as UpstoxAPI from "./upstox-sdk-client.mjs";
 
 // ─── Load .env ──────────────────────────────────────────────────────────────
 const envPath = resolve(".env");
@@ -393,10 +393,10 @@ async function readBody(req) {
 }
 
 async function upstoxGet(path, token) {
-  // DEPRECATED: Use UpstoxSDK methods instead
+  // DEPRECATED: Use UpstoxAPI methods instead
   // This function kept for backwards compatibility
-  // Direct HTTP calls replaced with SDK client calls below
-  throw new Error("Direct upstoxGet() deprecated. Use UpstoxSDK module instead.");
+  // Direct HTTP calls replaced with API client calls below
+  throw new Error("Direct upstoxGet() deprecated. Use UpstoxAPI module instead.");
 }
 
 // Resolve symbol → Upstox instrument_key
@@ -417,18 +417,18 @@ function buildSearchQuery(symbol) {
 
 async function searchUpstoxInstruments(token, query, options = {}) {
   try {
-    const results = await UpstoxSDK.searchInstruments(query, {
-      exchanges: options.exchanges || "NSE,BSE",
-      segments: options.segments || "EQ,INDEX",
+    const results = await UpstoxAPI.searchInstruments(query, {
+      exchanges: options.exchanges || "NSE",
+      segments: options.segments || "", // Removed EQ,INDEX since INDEX is not a segment!
       pageNumber: options.pageNumber || 1,
-      records: options.records || 10,
+      records: options.records || 20,
       instrumentTypes: options.instrumentTypes,
       expiry: options.expiry,
       atmOffset: options.atmOffset,
     }, token);
     return results;
   } catch (err) {
-    console.warn("[searchUpstoxInstruments] SDK error:", err.message);
+    console.warn("[searchUpstoxInstruments] API error:", err.message);
     return [];
   }
 }
@@ -492,7 +492,7 @@ async function resolveInstrument(symbol, token) {
   };
 }
 
-// ─── REAL CANDLE FETCH from Upstox using SDK ──────────────────────────────
+// ─── REAL CANDLE FETCH from Upstox API ──────────────────────────────
 async function fetchRealCandles(token, instrumentKey, resolution, mode = "tech") {
   try {
     const r = String(resolution).toUpperCase().trim();
@@ -511,7 +511,7 @@ async function fetchRealCandles(token, instrumentKey, resolution, mode = "tech")
       const from  = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
       const histRes = isDelivery ? "D" : r;
       try {
-        const candles = await UpstoxSDK.getHistoricalCandles(instrumentKey, histRes, today, from, token);
+        const candles = await UpstoxAPI.getHistoricalCandles(instrumentKey, histRes, today, from, token);
         if (candles && candles.length > 0) {
           console.log(`[V3 Historical] ${candles.length} candles (${histRes}) for ${instrumentKey} mode=${mode}`);
           return mapCandles(candles);
@@ -525,7 +525,7 @@ async function fetchRealCandles(token, instrumentKey, resolution, mode = "tech")
     // INTRADAY — V3 Intraday API (primary)
     const intradayInterval = mapResolutionToIntradayInterval(r);
     try {
-      const candles = await UpstoxSDK.getIntradayCandles(instrumentKey, intradayInterval, token);
+      const candles = await UpstoxAPI.getIntradayCandles(instrumentKey, intradayInterval, token);
       if (candles && candles.length > 0) {
         console.log(`[V3 Intraday] ${candles.length} candles (${intradayInterval}) for ${instrumentKey} mode=${mode}`);
         return mapCandles(candles);
@@ -538,7 +538,7 @@ async function fetchRealCandles(token, instrumentKey, resolution, mode = "tech")
     try {
       const today = new Date().toISOString().slice(0, 10);
       const from  = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
-      const candles = await UpstoxSDK.getHistoricalCandles(instrumentKey, r, today, from, token);
+      const candles = await UpstoxAPI.getHistoricalCandles(instrumentKey, r, today, from, token);
       if (candles && candles.length > 0) {
         console.log(`[V3 Hist-fallback] ${candles.length} candles for ${instrumentKey}`);
         return mapCandles(candles);
@@ -554,7 +554,7 @@ async function fetchRealCandles(token, instrumentKey, resolution, mode = "tech")
   }
 }
 
-// Map UI resolution to a minute-count string for V3 intraday (SDK resolves unit internally)
+// Map UI resolution to a minute-count string for V3 intraday (API resolves unit internally)
 function mapResolutionToIntradayInterval(r) {
   const map = { "1": "1", "3": "3", "5": "5", "15": "15", "30": "30",
                 "60": "60", "1H": "60", "120": "120", "2H": "120",
@@ -565,14 +565,14 @@ function mapResolutionToIntradayInterval(r) {
   return "5";
 }
 
-// REAL LTP from Market Quotes API via SDK
+// REAL LTP from Market Quotes API
 async function fetchLTP(token, instrumentKey) {
   try {
-    const data = await UpstoxSDK.getLTP(instrumentKey, token);
+    const data = await UpstoxAPI.getLTP(instrumentKey, token);
     const key = Object.keys(data || {})[0];
     if (key) return Number(data[key]?.last_price) || null;
   } catch (e) {
-    console.warn("[SDK] LTP fetch failed:", e.message);
+    console.warn("[UpstoxAPI] LTP fetch failed:", e.message);
   }
   return null;
 }
@@ -620,7 +620,7 @@ async function buildRealAnalyzePayload(symbol, candles, ltpOverride, mode = "tec
     // Try real option chain from Upstox API first
     if (token && instrumentKey && (mode === "fo" || isIndex)) {
       try {
-        const chainData = await UpstoxSDK.getOptionChain(instrumentKey, null, token);
+        const chainData = await UpstoxAPI.getOptionChain(instrumentKey, null, token);
         if (Array.isArray(chainData) && chainData.length > 0) {
           foGreeks = chainData.flatMap(item => {
             const results = [];
@@ -887,9 +887,10 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const matches = await searchUpstoxInstruments(token, q, {
-        exchanges: url.searchParams.get("exchanges") || "NSE,BSE",
-        segments: url.searchParams.get("segments") || "EQ,INDEX",
-        records: Math.min(Number(url.searchParams.get("records") || 15), 30),
+        exchanges: url.searchParams.get("exchanges") || "NSE",
+        segments: url.searchParams.get("segments") || "",
+        instrumentTypes: url.searchParams.get("instrumentTypes") || "",
+        records: Math.min(Number(url.searchParams.get("records") || 20), 50),
       });
       writeJson(req, res, 200, { results: matches.map(formatSearchResult) });
       return;
@@ -900,7 +901,7 @@ const server = http.createServer(async (req, res) => {
       const redirectUri = url.searchParams.get("redirect_uri") || process.env.UPSTOX_REDIRECT_URI || "";
       const state = `anavai-${Date.now()}`;
       try {
-        const authUrl = UpstoxSDK.getAuthorizationUrl(redirectUri, state);
+        const authUrl = UpstoxAPI.getAuthorizationUrl(redirectUri, state);
         writeJson(req, res, 200, { status:"success", data:{ authorizationUrl:authUrl, state }});
       } catch (err) {
         writeJson(req, res, 400, { status:"error", message: err.message });
@@ -911,7 +912,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/auth/exchange") {
       const body = await readBody(req);
       try {
-        const tokenData = await UpstoxSDK.exchangeAuthCode(body.code, body.redirectUri);
+        const tokenData = await UpstoxAPI.exchangeAuthCode(body.code, body.redirectUri);
         writeJson(req, res, 200, { status:"success", data: tokenData });
       } catch (err) {
         writeJson(req, res, 400, { status:"error", message: err.message });
@@ -922,7 +923,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/auth/refresh") {
       const body = await readBody(req);
       try {
-        const tokenData = await UpstoxSDK.refreshAccessToken(body.refreshToken);
+        const tokenData = await UpstoxAPI.refreshAccessToken(body.refreshToken);
         writeJson(req, res, 200, { status:"success", data: tokenData });
       } catch (err) {
         writeJson(req, res, 400, { status:"error", message: err.message });
@@ -938,7 +939,7 @@ const server = http.createServer(async (req, res) => {
       if (!instrKey) { writeJson(req, res, 400, { status:"error", message:"instrumentKey is required" }); return; }
       
       const ivl = interval === "1" ? "1minute" : "30minute";
-      const candles = await UpstoxSDK.getIntradayCandles(instrKey, ivl, token);
+      const candles = await UpstoxAPI.getIntradayCandles(instrKey, ivl, token);
       writeJson(req, res, 200, { status:"success", data:{ usingSandboxToken:true, candles }});
       return;
     }
@@ -952,8 +953,38 @@ const server = http.createServer(async (req, res) => {
       const fromDate = url.searchParams.get("fromDate");
       if (!instrKey||!toDate) { writeJson(req, res, 400, {status:"error",message:"instrumentKey and toDate required"}); return; }
       
-      const candles = await UpstoxSDK.getHistoricalCandles(instrKey, interval, toDate, fromDate, token);
+      const candles = await UpstoxAPI.getHistoricalCandles(instrKey, interval, toDate, fromDate, token);
       writeJson(req, res, 200, { status:"success", data:{ candles }});
+      return;
+    }
+
+    // ── /news — Market News for Instruments ──────────────────────────────────
+    if (req.method === "GET" && url.pathname === "/news") {
+      const newsToken = getToken(req);
+      const category = url.searchParams.get("category") || "instrument_keys";
+      const instrumentKeys = url.searchParams.get("instrument_keys");
+      const pageNumber = url.searchParams.get("page_number") || 1;
+      const pageSize = url.searchParams.get("page_size") || 20;
+
+      console.log(`[News] Token length: ${newsToken?.length || 0}, Category: ${category}, Keys: ${instrumentKeys}`);
+
+      if (!newsToken) {
+        console.warn(`[News] No token available - check Authorization header or UPSTOX_SANDBOX_ACCESS_TOKEN`);
+      }
+
+      try {
+        const newsData = await UpstoxAPI.getNews({
+          category,
+          instrument_keys: instrumentKeys,
+          page_number: pageNumber,
+          page_size: pageSize,
+        }, newsToken);
+
+        writeJson(req, res, 200, newsData);
+      } catch (err) {
+        console.error(`[News Error] ${err.message}`);
+        writeJson(req, res, 400, { status: "error", message: err.message });
+      }
       return;
     }
 
@@ -1034,18 +1065,18 @@ Rules:
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-  const sdkStatus = UpstoxSDK.getConfigStatus();
+  const apiStatus = UpstoxAPI.getConfigStatus();
   
   console.log(`\n🚀 ANAV PRO Local API Server`);
   console.log(`   Port: ${PORT}`);
-  console.log(`   Upstox SDK: ${sdkStatus.isValid ? '✓ CONFIGURED' : '⚠ INCOMPLETE'}`);
-  console.log(`   Sandbox Token: ${sdkStatus.hasSandboxToken ? '✓ LOADED' : '✗ NOT SET'}`);
+  console.log(`   Upstox API: ${apiStatus.isValid ? '✓ CONFIGURED' : '⚠ INCOMPLETE'}`);
+  console.log(`   Sandbox Token: ${apiStatus.hasSandboxToken ? '✓ LOADED' : '✗ NOT SET'}`);
   console.log(`   Symbols: ${Object.keys(SYMBOL_TO_INSTRUMENT).length} mapped`);
   console.log(`   CORS Origins: ${ALLOWED_ORIGINS.join(', ')}`);
   
-  if (!sdkStatus.isValid) {
+  if (!apiStatus.isValid) {
     console.log(`\n⚠️  WARNING: Missing configuration. Set these in .env:`);
-    sdkStatus.missingVars.forEach(v => console.log(`   - ${v}`));
+    apiStatus.missingVars.forEach(v => console.log(`   - ${v}`));
     console.log(`\n   See .env.example for setup instructions\n`);
   } else {
     console.log(`\n✓ All systems ready!\n`);
