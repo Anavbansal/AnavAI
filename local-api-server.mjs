@@ -1720,47 +1720,175 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // ── /api/assistant — AI Trading Assistant Chat ───────────────────────────
+    // ── /api/assistant — AI Trading Assistant with live stock fetch ──────────
     if (req.method === "POST" && url.pathname === "/api/assistant") {
-      const body = await readBody(req);
+      const body        = await readBody(req);
       const userMessage = String(body.message || "").trim();
-      const context = body.context || {}; // current symbol data from frontend
-      const history = Array.isArray(body.history) ? body.history.slice(-8) : []; // last 8 messages
+      const context     = body.context || {};
+      const history     = Array.isArray(body.history) ? body.history.slice(-10) : [];
 
-      if (!userMessage) {
-        writeJson(req, res, 400, { error: "message is required" });
-        return;
-      }
+      if (!userMessage) { writeJson(req, res, 400, { error: "message required" }); return; }
 
       const groqKey = process.env.GROQ_API_KEY;
       if (!groqKey) {
         writeJson(req, res, 200, {
-          reply: "AI Assistant needs a GROQ_API_KEY in your .env file. Get one free at console.groq.com, then add GROQ_API_KEY=your_key to .env and restart the server."
+          reply: "⚠ GROQ_API_KEY not set. Add it to your .env file — get one free at console.groq.com"
         });
         return;
       }
 
-      const systemPrompt = `You are ANAV AI — an expert Indian stock market trading assistant built into the ANAV PRO terminal.
-You have real-time access to the user's current analysis context.
-You help with: trade setups, technical analysis, F&O strategies, risk management, market concepts, and Indian market specifics (NSE/BSE/SEBI rules).
+      // ── STEP 1: Intent detection — does the user want live data for a stock? ──
+      // Detect patterns like: "RELIANCE ka data", "analyze SBIN", "TCS ka kya hoga",
+      // "show me HDFC", "intraday NIFTY", "buy or sell INFY"
+      const msgUpper = userMessage.toUpperCase().replace(/[?!.,]/g, " ");
 
-Current Market Context:
-${context.symbol ? `Symbol: ${context.symbol}` : "No symbol selected"}
-${context.price ? `Price: ₹${context.price}` : ""}
-${context.verdict ? `AI Verdict: ${context.verdict} (${context.confidence}% confidence)` : ""}
-${context.rsi ? `RSI: ${context.rsi}` : ""}
-${context.regime ? `Market Regime: ${context.regime}` : ""}
-${context.entry ? `Entry: ₹${context.entry} | Target: ₹${context.target} | SL: ₹${context.stopLoss}` : ""}
-${context.vwap ? `VWAP: ₹${context.vwap} | EMA20: ₹${context.ema20}` : ""}
+      // Common Indian stock/index names + "ka", "ke", "ki", "about", "of", "for", "analyze"
+      const stockIntent = /(ka |ke |ki |of |for |about |analyze |check |show |tell me |intraday |buy|sell|target|entry|sl |stoploss|data|analysis|signal|chart|price|kya|hoga|lagta|dono|kaisa|dekho|bata)/i;
+      const knownSymbols = Object.keys({
+        NIFTY:1,BANKNIFTY:1,FINNIFTY:1,SENSEX:1,RELIANCE:1,TCS:1,HDFCBANK:1,
+        INFY:1,ICICIBANK:1,SBIN:1,WIPRO:1,BAJFINANCE:1,ADANIENT:1,LT:1,
+        AXISBANK:1,KOTAKBANK:1,MARUTI:1,ASIANPAINT:1,TATAMOTORS:1,HINDUNILVR:1,
+        SUNPHARMA:1,TECHM:1,ONGC:1,POWERGRID:1,COALINDIA:1,ITC:1,BHARTIARTL:1,
+        TATASTEEL:1,JSWSTEEL:1,ULTRACEMCO:1,NTPC:1,BAJAJFINSV:1,HCLTECH:1,
+        DRREDDY:1,CIPLA:1,DIVISLAB:1,INDUSINDBK:1,HINDALCO:1,VEDL:1,M_M:1,
+        TITAN:1,NESTLEIND:1,BRITANNIA:1,PIDILITIND:1,SIEMENS:1,ABB:1,HAVELLS:1,
+        DIXON:1,POLYCAB:1,TATAPOWER:1,ADANIPORTS:1,GRASIM:1,SHREECEM:1,
+        APOLLOHOSP:1,MAXHEALTH:1,FORTIS:1,IRCTC:1,CDSL:1,BSE:1,MCX:1,
+      });
 
-Rules:
-- Be concise and practical. Use ₹ for prices.
-- Always mention risk management.
-- For F&O questions, mention Greeks if relevant.
-- Never guarantee profits. Always say "as per current analysis" or "based on indicators".
-- If asked about a symbol not in context, give general guidance.
-- Keep replies under 200 words unless a detailed explanation is explicitly needed.`;
+      // Extract mentioned symbol from message
+      let mentionedSymbol = null;
+      const words = msgUpper.trim().split(/\s+/);
+      for (const word of words) {
+        const clean = word.replace(/[^A-Z0-9_]/g,'');
+        if (knownSymbols[clean] || knownSymbols[clean.replace('_','&')]) {
+          mentionedSymbol = clean === 'M_M' ? 'M&M' : clean;
+          break;
+        }
+        // Also catch partial matches like "HDFC" for "HDFCBANK"
+        for (const sym of Object.keys(knownSymbols)) {
+          if (sym.startsWith(clean) && clean.length >= 3) { mentionedSymbol = sym; break; }
+        }
+        if (mentionedSymbol) break;
+      }
 
+      // Also check if user typed something after common trigger words
+      const triggerMatch = userMessage.match(/(?:analyze|check|show|about|of|for|intraday|delivery)\s+([A-Za-z&]{3,12})/i);
+      if (!mentionedSymbol && triggerMatch) {
+        mentionedSymbol = triggerMatch[1].toUpperCase().trim();
+      }
+
+      // ── STEP 2: If stock mentioned, fetch live analysis ──────────────────────
+      let liveStockData = null;
+      let fetchedSymbol = mentionedSymbol;
+
+      // Fetch if: mentioned a different symbol OR no current context
+      const contextSym = (context.symbol || "").toUpperCase();
+      const needsFetch = mentionedSymbol && mentionedSymbol !== contextSym && stockIntent.test(userMessage);
+
+      if (needsFetch || (!contextSym && mentionedSymbol)) {
+        try {
+          console.log(`[Assistant] Fetching live data for "${mentionedSymbol}"...`);
+          const resolved = await resolveInstrument(mentionedSymbol, token);
+          if (resolved?.instrumentKey) {
+            const candles = await fetchRealCandles(token, resolved.instrumentKey, "5");
+            if (candles && candles.length > 0) {
+              liveStockData = await buildRealAnalyzePayload(resolved.displaySymbol || mentionedSymbol, candles, null);
+              fetchedSymbol = resolved.displaySymbol || mentionedSymbol;
+              console.log(`[Assistant] Live data fetched for ${fetchedSymbol}: ₹${liveStockData.price}`);
+            }
+          }
+        } catch (e) {
+          console.warn(`[Assistant] Live fetch failed for ${mentionedSymbol}:`, e.message);
+        }
+      }
+
+      // ── STEP 3: Build rich context for Groq ─────────────────────────────────
+      // Use live data if fetched, else use dashboard context
+      const activeData = liveStockData || context;
+      const activeSym  = fetchedSymbol || contextSym;
+      const isLive     = !!liveStockData;
+
+      // Helper to format number
+      const fmtN = n => n != null ? Number(n).toLocaleString('en-IN', {minimumFractionDigits:2,maximumFractionDigits:2}) : 'N/A';
+
+      const activeContext = isLive ? `
+═══════════════════════════════════════
+📊 LIVE DATA FETCHED: ${activeSym}
+═══════════════════════════════════════
+Price:      ₹${fmtN(activeData.price)} | Change: ${(activeData.changePct||0).toFixed(2)}%
+VWAP:       ₹${fmtN(activeData.vwap)}   | ATR: ₹${fmtN(activeData.atr)}
+
+EMAs:
+  EMA9:  ₹${fmtN(activeData.ema9)}  | EMA20: ₹${fmtN(activeData.ema20)}
+  EMA50: ₹${fmtN(activeData.ema50)} | EMA200: ₹${fmtN(activeData.ema200)}
+
+Momentum:
+  RSI: ${activeData.rsi}  |  StochRSI K: ${activeData.stochRSI?.k??'N/A'} D: ${activeData.stochRSI?.d??'N/A'}
+  MACD: ${activeData.macd?.macd?.toFixed(3)} | Signal: ${activeData.macd?.signal?.toFixed(3)} | Hist: ${activeData.macd?.histogram?.toFixed(4)}
+  Williams %R: ${activeData.williamsR??'N/A'} | CCI: ${activeData.cci??'N/A'} | ROC: ${activeData.roc??'N/A'}%
+
+Trend:
+  Supertrend: ${activeData.supertrend?.direction?.toUpperCase()} @ ₹${fmtN(activeData.supertrend?.value)}
+  ADX: ${activeData.adx?.adx} (${activeData.adx?.trend}) | +DI: ${activeData.adx?.pdi} -DI: ${activeData.adx?.mdi}
+  M1: ${activeData.m1Trend} | M5: ${activeData.m5Trend} | M15: ${activeData.m15Trend}
+  Consistency: ${activeData.trendConsistency} | Regime: ${activeData.regime}
+
+Levels:
+  Support: ₹${fmtN(activeData.support)} | Resistance: ₹${fmtN(activeData.resistance)}
+  52W High: ₹${fmtN(activeData.high52w)} | 52W Low: ₹${fmtN(activeData.low52w)}
+
+AI Signal (rule-based):
+  Verdict: ${activeData.ai?.verdict || activeData.verdict || 'N/A'} (${activeData.ai?.confidence || activeData.confidence || 'N/A'}% conf)
+  Entry: ₹${fmtN(activeData.ai?.entry || activeData.entry)} | Target: ₹${fmtN(activeData.ai?.target || activeData.target)} | SL: ₹${fmtN(activeData.ai?.stopLoss || activeData.stopLoss)}
+  R:R: ${activeData.ai?.riskReward || activeData.riskReward || 'N/A'}:1
+  OBV: ${activeData.obv?.trend || 'N/A'} | PCR: ${activeData.pcr||'N/A'} | Vol Ratio: ${activeData.volumeRatio||'N/A'}x
+
+Candle Patterns: ${activeData.patterns?.slice(0,2).map(p=>p.name+'('+p.confidence+'%)').join(', ') || 'None'}
+═══════════════════════════════════════` 
+      : (activeSym ? `
+Current Dashboard Context (${activeSym}):
+Price: ₹${fmtN(activeData.price)} | VWAP: ₹${fmtN(activeData.vwap)} | EMA20: ₹${fmtN(activeData.ema20)} | EMA50: ₹${fmtN(activeData.ema50)}
+RSI: ${activeData.rsi} | StochRSI: ${JSON.stringify(activeData.stochRSI||{})} | MACD hist: ${activeData.macd?.histogram?.toFixed(4)||'N/A'}
+ADX: ${activeData.adx?.adx||'N/A'} | Supertrend: ${activeData.supertrend?.direction||'N/A'} @ ₹${fmtN(activeData.supertrend?.value)}
+Regime: ${activeData.regime} | Trend: ${activeData.trendConsistency}
+Verdict: ${activeData.verdict||'N/A'} (${activeData.confidence||'N/A'}%) | Entry: ₹${fmtN(activeData.entry)} | Target: ₹${fmtN(activeData.target)} | SL: ₹${fmtN(activeData.stopLoss)}
+Support: ₹${fmtN(activeData.support)} | Resistance: ₹${fmtN(activeData.resistance)}`
+      : "No symbol selected in dashboard. User can ask me to analyze any stock.");
+
+      const systemPrompt = `You are ANAV AI — a professional Indian stock market trading assistant inside the ANAV PRO terminal.
+
+CAPABILITIES:
+- I have LIVE real-time data fetching. When users ask about any stock, I fetch and analyze it instantly.
+- I know all NSE/BSE stocks, indices, F&O, mutual funds.
+- I give specific ₹ price levels — not vague answers.
+- I speak Hinglish naturally when user does.
+
+EXPERTISE:
+- Technical Analysis (EMA, VWAP, RSI, MACD, Supertrend, ADX, StochRSI, Williams%R, CCI, BB, Ichimoku, Fibonacci)
+- F&O (Option Greeks Delta/Theta/Vega/Gamma, IV, OI analysis, PCR, spreads, hedging, expiry strategies)
+- Intraday (scalping, momentum, VWAP strategy, opening range breakout, power hour)
+- Delivery/Swing (EMA crossovers, breakouts, Fibonacci targets, positional trades)
+- Risk Management (position sizing, Kelly criterion, max drawdown, portfolio hedging)
+- Indian market specifics (NSE/BSE, F&O expiry, FII/DII flows, circuit limits, SEBI rules)
+
+${activeContext}
+
+RESPONSE RULES:
+1. Always use ₹ for Indian prices
+2. Give SPECIFIC entry, target, SL with ₹ values — never say "it depends" without explanation
+3. For F&O: suggest specific strikes (e.g. "24500 CE" or "24000 PE")
+4. Keep it concise: 3-6 lines for simple Q, max 150 words for complex analysis
+5. Use **bold** for key numbers and verdicts
+6. If data was LIVE FETCHED, say "Based on live ${activeSym} data:"
+7. If asked about a stock not in context — say you can fetch it: "Let me analyze [SYMBOL] for you"
+8. Risk disclaimer on trade suggestions: "SL must be honored"
+9. Never guarantee profits — say "as per current technicals"
+10. Hinglish OK — respond in same language/style as user
+
+IMPORTANT: ${isLive ? `You just fetched LIVE data for ${activeSym}. Use those exact numbers in your response.` : `If user asks about a specific stock that's NOT in context, mention that they can ask you to "analyze [STOCK NAME]" or search it in the terminal.`}`;
+
+      // ── STEP 4: Call Groq with rich context ──────────────────────────────────
       const messages = [
         ...history.map(h => ({ role: h.role, content: h.content })),
         { role: "user", content: userMessage }
@@ -1771,20 +1899,26 @@ Rules:
         headers: { "Authorization": `Bearer ${groqKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "llama-3.3-70b-versatile",
-          temperature: 0.4,
-          max_tokens: 500,
+          temperature: 0.3,
+          max_tokens: 700,
           messages: [{ role: "system", content: systemPrompt }, ...messages]
         })
       });
 
       if (!groqRes.ok) {
-        writeJson(req, res, 502, { error: "AI service unavailable. Check GROQ_API_KEY." });
+        const errText = await groqRes.text().catch(()=>"");
+        writeJson(req, res, 502, { error: `Groq API error: ${groqRes.status}. ${errText.slice(0,100)}` });
         return;
       }
 
       const groqData = await groqRes.json();
-      const reply = groqData?.choices?.[0]?.message?.content || "Sorry, I couldn't generate a response. Please try again.";
-      writeJson(req, res, 200, { reply });
+      const reply = groqData?.choices?.[0]?.message?.content || "Sorry, I could not generate a response. Please try again.";
+
+      writeJson(req, res, 200, {
+        reply,
+        fetchedSymbol: isLive ? fetchedSymbol : null,
+        isLiveData: isLive,
+      });
       return;
     }
 
