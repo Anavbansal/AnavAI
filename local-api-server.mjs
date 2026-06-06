@@ -1265,7 +1265,7 @@ const server = http.createServer(async (req, res) => {
       // Free fallback: Google News RSS
       try {
         // Extract readable symbol from instrument key e.g. NSE_EQ|INE002A01018 → RELIANCE
-        const symRaw = instrumentKeys.split("|").pop()?.replace(/+/g," ").trim() || "Nifty 50";
+        const symRaw = instrumentKeys.split("|").pop()?.replace(/\+/g," ").trim() || "Nifty 50";
         const query  = encodeURIComponent(symRaw + " NSE stock market India");
         const rssUrl = `https://news.google.com/rss/search?q=${query}&hl=en-IN&gl=IN&ceid=IN:en`;
 
@@ -1278,14 +1278,16 @@ const server = http.createServer(async (req, res) => {
 
         // Parse RSS items
         const items = [];
-        const itemRx = /<item>([sS]*?)</item>/g;
+        const itemRx = /<item>([\s\S]*?)<\/item>/g;
         let m;
         while ((m = itemRx.exec(rssText)) !== null && items.length < 12) {
           const block = m[1];
-          const title     = (/<title><![CDATA[([sS]*?)]]></title>/.exec(block) || /<title>([sS]*?)</title>/.exec(block))?.[1]?.trim() || "";
-          const link      = (/<link>([sS]*?)</link>/.exec(block))?.[1]?.replace(/&amp;/g,"&").trim() || "";
-          const pubDate   = (/<pubDate>([sS]*?)</pubDate>/.exec(block))?.[1]?.trim() || "";
-          const source    = (/<source[^>]*>([sS]*?)</source>/.exec(block))?.[1]?.trim() || "Google News";
+          const cdataRx = /<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>/;
+          const plainTx = /<title>([\s\S]*?)<\/title>/;
+          const title = (cdataRx.exec(block) || plainTx.exec(block))?.[1]?.trim() || "";
+          const link = (/<link>([\s\S]*?)<\/link>/.exec(block))?.[1]?.replace(/&amp;/g,"&").trim() || "";
+          const pubDate = (/<pubDate>([\s\S]*?)<\/pubDate>/.exec(block))?.[1]?.trim() || "";
+          const source = (/<source[^>]*>([\s\S]*?)<\/source>/.exec(block))?.[1]?.trim() || "Google News";
 
           if (!title) continue;
 
