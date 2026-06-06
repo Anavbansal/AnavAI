@@ -10,10 +10,13 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 const CONFIG = {
-  clientId: process.env.UPSTOX_CLIENT_ID,
-  clientSecret: process.env.UPSTOX_CLIENT_SECRET,
-  redirectUri: process.env.UPSTOX_REDIRECT_URI,
-  accessToken: process.env.UPSTOX_SANDBOX_ACCESS_TOKEN,
+  // Algo Trading app credentials (preferred for OAuth login)
+  // Use UPSTOX_ALGO_CLIENT_ID + UPSTOX_ALGO_CLIENT_SECRET for the new Algo app
+  // Falls back to sandbox credentials if algo not set
+  clientId:     process.env.UPSTOX_ALGO_CLIENT_ID     || process.env.UPSTOX_CLIENT_ID,
+  clientSecret: process.env.UPSTOX_ALGO_CLIENT_SECRET || process.env.UPSTOX_CLIENT_SECRET,
+  redirectUri:  process.env.UPSTOX_ALGO_REDIRECT_URI  || process.env.UPSTOX_REDIRECT_URI,
+  accessToken:  process.env.UPSTOX_SANDBOX_ACCESS_TOKEN,
   baseUrl: 'https://api.upstox.com',
   apiVersion: '2.0',
 }
