@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: anavai-backend
+    runtime: node
+    buildCommand: npm install
+    startCommand: node local-api-server.mjs
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000

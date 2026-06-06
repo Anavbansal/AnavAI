@@ -6,12 +6,13 @@
   "scripts": {
     "api": "node --env-file=.env local-api-server.mjs",
     "dev": "vite",
-    "build": "echo \"Backend — no build step needed\"",
+    "build": "vite build",
     "preview": "vite preview",
     "lint": "echo \"No lint configuration yet\"",
     "lambda:zip": "powershell -Command \"if (Test-Path dist-lambda) { Remove-Item -Recurse -Force dist-lambda }; New-Item -ItemType Directory dist-lambda | Out-Null; Copy-Item -Recurse lambda\\* dist-lambda; Compress-Archive -Path dist-lambda\\* -DestinationPath upstox-lambda.zip -Force\"",
     "start": "node local-api-server.mjs",
-    "start:prod": "NODE_ENV=production node local-api-server.mjs"
+    "start:prod": "NODE_ENV=production node local-api-server.mjs",
+    "build:backend": "echo \"Backend — no build step\""
   },
   "dependencies": {
     "lucide-react": "^0.383.0",
