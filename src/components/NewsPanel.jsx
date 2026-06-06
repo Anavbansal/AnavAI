@@ -1,151 +1,104 @@
-import React, { useMemo, useState, useEffect } from 'react'
-import { getMarketNews } from '../lib/api'
-import { searchSymbol } from '../services/marketData'
+import React, { useEffect, useState } from 'react'
+import { API_BASE_URL } from '../config'
 
-const SENTIMENT_STYLES = {
-  BULLISH: { color: '#00ff88', bg: 'rgba(0,255,136,0.12)', border: 'rgba(0,255,136,0.3)' },
-  BEARISH: { color: '#ff3366', bg: 'rgba(255,51,102,0.12)', border: 'rgba(255,51,102,0.3)' },
-  NEUTRAL: { color: '#ffd700', bg: 'rgba(255,215,0,0.1)', border: 'rgba(255,215,0,0.3)' },
+const SENT = {
+  BULLISH: { color:'var(--green)', bg:'#22c55e11', dot:'#22c55e' },
+  BEARISH: { color:'var(--red)',   bg:'#f43f5e11', dot:'#f43f5e' },
+  NEUTRAL: { color:'var(--text2)', bg:'transparent', dot:'#4b6082' },
 }
 
-function timeAgo(mins) {
-  if (!Number.isFinite(mins)) return 'Time unavailable'
-  if (mins < 60) return `${mins} min ago`
-  const h = Math.floor(mins / 60)
-  const m = mins % 60
-  return `${h}h ${m > 0 ? `${m}m` : ''} ago`
+function timeAgo(ms) {
+  if (!ms) return ''
+  const mins = Math.round((Date.now() - ms) / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const h = Math.floor(mins/60); return `${h}h ago`
 }
 
-export default function NewsPanel({ symbol, instrumentKey, news: backendNews = [] }) {
-  const [upstoxNews, setUpstoxNews] = useState(null)
-  const [loading, setLoading] = useState(false)
+export default function NewsPanel({ symbol, instrumentKey }) {
+  const [articles, setArticles] = useState([])
+  const [loading, setLoading]   = useState(false)
+  const [error, setError]       = useState(null)
 
   useEffect(() => {
-    let isMounted = true;
+    if (!symbol && !instrumentKey) return
+    let mounted = true
+    setLoading(true); setError(null)
 
-    async function fetchNews() {
-      if (!symbol && !instrumentKey) return;
-      
-      try {
-        setLoading(true);
-        let key = instrumentKey;
+    const key = instrumentKey || symbol
+    const token = localStorage.getItem('upstox_access_token') || ''
+    const params = new URLSearchParams({ category:'instrument_keys', instrument_keys: key })
 
-        // Try to obtain the exact instrument_key from Upstox via search if omitted
-        if (!key && symbol) {
-          const results = await searchSymbol(symbol);
-          const match = results.find(r => r.symbol === symbol || r.symbol?.includes(symbol));
-          if (match && (match.instrument_key || match.instrumentKey)) {
-            key = match.instrument_key || match.instrumentKey;
-          }
-        }
-
-        if (!key) return; // Fallback entirely to backendNews if key is still missing
-
-        const token = localStorage.getItem('upstox_access_token') || null;
-        const res = await getMarketNews(token, { category: 'instrument_keys', instrument_keys: key });
-        
-        if (isMounted && res.status === 'success' && res.data) {
-          const articles = Array.isArray(res.data) ? res.data : (res.data[key] || Object.values(res.data)[0]);
-          if (Array.isArray(articles)) {
-            setUpstoxNews(articles);
-          }
-        }
-      } catch (err) {
-        console.warn('Failed to fetch Upstox news:', err);
-      } finally {
-        if (isMounted) setLoading(false);
-      }
-    }
-
-    fetchNews();
-    return () => { isMounted = false; }
-  }, [symbol, instrumentKey]);
-
-  const news = useMemo(() => {
-    if (upstoxNews && upstoxNews.length > 0) {
-      return upstoxNews.slice(0, 7).map((item, index) => {
-        // Unify timestamp structures from the Upstox API
-        const ts = item?.publishedAt || item?.published_timestamp || item?.timestamp || Date.now();
-        const publishedMs = Number(ts) > 1e11 ? Number(ts) : new Date(ts).getTime();
-        const mins = Number.isFinite(publishedMs)
-          ? Math.max(0, Math.round((Date.now() - publishedMs) / 60000))
-          : NaN
-
-        return {
-          id: item?.id ?? `upstox-news-${index}`,
-          title: item?.headline ?? item?.title ?? 'Market update',
-          source: item?.source ?? 'Upstox',
-          sentiment: 'NEUTRAL', // Native Upstox API lacks sentiment tagging out-of-the-box
-          mins,
-          url: item?.link ?? item?.url ?? null,
-        }
-      })
-    }
-
-    return backendNews.slice(0, 7).map((item, index) => {
-      const publishedMs = item?.publishedAt ? new Date(item.publishedAt).getTime() : NaN
-      const mins = Number.isFinite(publishedMs)
-        ? Math.max(0, Math.round((Date.now() - publishedMs) / 60000))
-        : NaN
-
-      return {
-        id: item?.id ?? index,
-        title: item?.title ?? 'Market update',
-        source: item?.source ?? 'Unknown',
-        sentiment: item?.sentiment ?? 'NEUTRAL',
-        mins,
-        url: item?.url ?? null,
-      }
+    fetch(`${API_BASE_URL}/news?${params}`, {
+      headers: token ? { Authorization:`Bearer ${token}` } : {}
     })
-  }, [backendNews])
+      .then(r => r.json())
+      .then(json => {
+        if (!mounted) return
+        const data = json?.data || {}
+        const list = Array.isArray(data)
+          ? data
+          : (data[key] || data[Object.keys(data)[0]] || [])
+        setArticles(Array.isArray(list) ? list.slice(0,10) : [])
+      })
+      .catch(e => { if (mounted) setError(e.message) })
+      .finally(() => { if (mounted) setLoading(false) })
+
+    return () => { mounted = false }
+  }, [symbol, instrumentKey])
+
+  const items = articles.map((a,i) => {
+    const title = a.headline || a.title || ''
+    const ms    = a.published_timestamp || (a.publishedAt ? new Date(a.publishedAt).getTime() : 0)
+    const tl    = title.toLowerCase()
+    const bullKw = ['surge','rally','gain','rise','profit','record','high','buy','upgrade','beat','growth','strong','positive','jump','soar','bull']
+    const bearKw = ['fall','drop','crash','loss','decline','sell','downgrade','miss','weak','concern','risk','cut','slump','bear','negative','plunge']
+    const sent = bullKw.some(k=>tl.includes(k)) ? 'BULLISH' : bearKw.some(k=>tl.includes(k)) ? 'BEARISH' : 'NEUTRAL'
+    return { id:`n${i}`, title, url: a.link||a.url||a.article_link||null, source: a.source||'News', ms, sent }
+  })
 
   return (
-    <div className="panel animate-fadein">
-      <div className="panel-header">
-        <div className="panel-title flex items-center gap-2">
-          Live News Feed
-          {loading && <div className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} />}
+    <div className="card anim-fade">
+      <div className="card-header">
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          <span style={{fontSize:16}}>📰</span>
+          <span className="card-title">Live News</span>
         </div>
-        <span className="ml-auto font-mono text-muted" style={{ fontSize: 10 }}>NSE · FII · Macro</span>
+        <span style={{marginLeft:'auto',fontSize:11,color:'var(--text3)'}}>{symbol}</span>
+        {loading && <span className="anim-spin" style={{display:'inline-block',width:12,height:12,border:'2px solid var(--border)',borderTopColor:'var(--accent2)',borderRadius:'50%'}}/>}
       </div>
-      <div className="divide-y" style={{ borderColor: '#1a3050' }}>
-        {!loading && news.length === 0 && (
-          <div className="px-3 py-6 text-center">
-            <div className="font-mono text-muted" style={{ fontSize: 11 }}>
-              No live news returned for {symbol || 'this symbol'}.
-            </div>
+
+      <div style={{ overflowY:'auto', maxHeight:380 }}>
+        {!loading && items.length === 0 && (
+          <div style={{ padding:32, textAlign:'center', color:'var(--text3)', fontSize:13 }}>
+            {error ? `⚠ ${error}` : 'No news found for this symbol'}
           </div>
         )}
-        {news.map((n) => {
-          const st = SENTIMENT_STYLES[n.sentiment] ?? SENTIMENT_STYLES.NEUTRAL
+        {items.map(n => {
+          const st = SENT[n.sent] || SENT.NEUTRAL
           const content = (
-            <>
-              <div className="text-gray-200 mb-1.5 leading-snug" style={{ fontSize: 13, fontWeight: 500 }}>
-                {n.title}
+            <div style={{ padding:'11px 16px', borderBottom:'1px solid var(--border)', transition:'background .1s' }}
+              onMouseEnter={e=>e.currentTarget.style.background='var(--surface2)'}
+              onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+              <div style={{ display:'flex', gap:8, alignItems:'flex-start' }}>
+                <div style={{ width:6, height:6, borderRadius:'50%', background:st.dot, marginTop:5, flexShrink:0 }}/>
+                <div>
+                  <div style={{ fontSize:13, color:'var(--text)', lineHeight:1.5, marginBottom:5 }}>{n.title}</div>
+                  <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                    <span style={{ fontSize:11, color:'var(--text3)' }}>{n.source}</span>
+                    <span style={{ fontSize:11, color:'var(--text3)' }}>{timeAgo(n.ms)}</span>
+                    <span style={{ marginLeft:'auto', fontSize:10, fontFamily:"'DM Mono',monospace", fontWeight:700,
+                      color:st.color, background:st.bg, padding:'1px 7px', borderRadius:20 }}>
+                      {n.sent}
+                    </span>
+                  </div>
+                </div>
               </div>
-              <div className="flex items-center gap-3">
-                <span className="font-mono text-muted" style={{ fontSize: 10 }}>{n.source}</span>
-                <span className="font-mono text-dim" style={{ fontSize: 10 }}>{timeAgo(n.mins)}</span>
-                <span className="font-mono px-1.5 py-0.5 ml-auto border" style={{ fontSize: 10, color: st.color, background: st.bg, borderColor: st.border }}>
-                  {n.sentiment}
-                </span>
-              </div>
-            </>
-          )
-
-          if (n.url) {
-            return (
-              <a key={n.id} href={n.url} target="_blank" rel="noreferrer" className="block px-3 py-2.5 hover:bg-bg3 transition-colors">
-                {content}
-              </a>
-            )
-          }
-
-          return (
-            <div key={n.id} className="px-3 py-2.5">
-              {content}
             </div>
           )
+          return n.url
+            ? <a key={n.id} href={n.url} target="_blank" rel="noreferrer" style={{display:'block',textDecoration:'none'}}>{content}</a>
+            : <div key={n.id}>{content}</div>
         })}
       </div>
     </div>

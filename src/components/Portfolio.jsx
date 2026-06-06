@@ -1,113 +1,113 @@
 import React, { useState } from 'react'
-import { fmt, getBasePrice } from '../utils/indicators'
 
-const DEMO_HOLDINGS = [
-  { symbol: 'RELIANCE', qty: 10, avgPrice: 2780, lastPrice: 2890 },
-  { symbol: 'TCS', qty: 5, avgPrice: 3600, lastPrice: 3754 },
-  { symbol: 'HDFCBANK', qty: 20, avgPrice: 1550, lastPrice: 1612 },
-  { symbol: 'INFY', qty: 15, avgPrice: 1480, lastPrice: 1548 },
-  { symbol: 'ICICIBANK', qty: 25, avgPrice: 1210, lastPrice: 1289 },
+const f = (n,d=2) => Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:d,maximumFractionDigits:d})
+const DEMO = [
+  {symbol:'RELIANCE', qty:10, avgPrice:2780, ltp:2890},
+  {symbol:'TCS',      qty:5,  avgPrice:3600, ltp:3754},
+  {symbol:'HDFCBANK', qty:20, avgPrice:1550, ltp:1612},
+  {symbol:'INFY',     qty:15, avgPrice:1480, ltp:1548},
+  {symbol:'ICICIBANK',qty:25, avgPrice:1210, ltp:1289},
 ]
 
 export default function Portfolio({ onSelectSymbol }) {
-  const [holdings, setHoldings] = useState(DEMO_HOLDINGS)
-  const [addForm, setAddForm] = useState({ symbol: '', qty: '', avgPrice: '' })
-  const [showAdd, setShowAdd] = useState(false)
+  const [holdings, setHoldings] = useState(DEMO)
+  const [form, setForm] = useState({sym:'',qty:'',avg:''})
+  const [showForm, setShowForm] = useState(false)
 
-  const processed = holdings.map(h => {
-    const mv = h.lastPrice * h.qty
-    const iv = h.avgPrice * h.qty
-    const pnl = mv - iv
-    const pnlPct = (pnl / iv) * 100
-    return { ...h, mv, iv, pnl, pnlPct }
+  const rows = holdings.map(h => {
+    const mv=h.ltp*h.qty, iv=h.avgPrice*h.qty, pnl=mv-iv, pct=(pnl/iv)*100
+    return {...h, mv, iv, pnl, pct}
   })
+  const totMV  = rows.reduce((s,r)=>s+r.mv,0)
+  const totIV  = rows.reduce((s,r)=>s+r.iv,0)
+  const totPnL = totMV-totIV
+  const totPct = totIV>0 ? (totPnL/totIV)*100 : 0
+  const pclr   = totPnL>=0 ? 'var(--green)' : 'var(--red)'
 
-  const totalMV = processed.reduce((a, h) => a + h.mv, 0)
-  const totalIV = processed.reduce((a, h) => a + h.iv, 0)
-  const totalPnL = totalMV - totalIV
-  const totalPnLPct = (totalPnL / totalIV) * 100
-  const dayPnL = totalMV * 0.0032 // simulated day pnl
-
-  function addHolding() {
-    if (!addForm.symbol || !addForm.qty || !addForm.avgPrice) return
-    setHoldings(prev => [...prev, {
-      symbol: addForm.symbol.toUpperCase(),
-      qty: parseInt(addForm.qty),
-      avgPrice: parseFloat(addForm.avgPrice),
-      lastPrice: getBasePrice(addForm.symbol) || parseFloat(addForm.avgPrice) * (1 + (Math.random() - 0.45) * 0.06),
-    }])
-    setAddForm({ symbol: '', qty: '', avgPrice: '' })
-    setShowAdd(false)
+  function add() {
+    if (!form.sym||!form.qty||!form.avg) return
+    setHoldings(p=>[...p,{symbol:form.sym.toUpperCase(),qty:+form.qty,avgPrice:+form.avg,ltp:+form.avg*1.02}])
+    setForm({sym:'',qty:'',avg:''}); setShowForm(false)
   }
+  function remove(sym) { setHoldings(p=>p.filter(h=>h.symbol!==sym)) }
 
   return (
-    <div className="panel animate-fadein">
-      <div className="panel-header">
-        <div className="panel-title">💼 Portfolio</div>
-        <button onClick={() => setShowAdd(s => !s)}
-          className="ml-auto font-mono border border-border text-muted px-2 py-0.5 hover:border-accent hover:text-accent transition-colors"
-          style={{ fontSize: 10 }}>
-          {showAdd ? '✕ CANCEL' : '+ ADD'}
+    <div className="card anim-fade">
+      <div className="card-header">
+        <span style={{fontSize:16}}>💼</span>
+        <span className="card-title">Portfolio</span>
+        <button onClick={()=>setShowForm(s=>!s)} className="btn btn-ghost"
+          style={{marginLeft:'auto',fontSize:12,padding:'4px 12px'}}>
+          {showForm ? '✕ Cancel' : '+ Add Holding'}
         </button>
       </div>
 
-      {/* Summary */}
-      <div className="grid grid-cols-3 gap-px border-b border-border" style={{ background: '#1a3050' }}>
+      {/* Summary strip */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:1,background:'var(--border)'}}>
         {[
-          { label: 'Portfolio Value', val: `₹${fmt(totalMV, 0)}`, color: '#c8dff0' },
-          { label: 'Total P&L', val: `${totalPnL >= 0 ? '+' : ''}₹${fmt(totalPnL, 0)}`, color: totalPnL >= 0 ? '#00ff88' : '#ff3366' },
-          { label: 'Day P&L', val: `${dayPnL >= 0 ? '+' : ''}₹${fmt(dayPnL, 0)}`, color: dayPnL >= 0 ? '#00ff88' : '#ff3366' },
-        ].map(s => (
-          <div key={s.label} className="bg-panel p-3 text-center">
-            <div className="font-mono text-dim uppercase tracking-wider" style={{ fontSize: 10 }}>{s.label}</div>
-            <div className="font-display font-bold mt-1" style={{ fontSize: 13, color: s.color }}>{s.val}</div>
+          {l:'Portfolio Value',v:`₹${f(totMV,0)}`,c:'var(--text)'},
+          {l:'Invested',v:`₹${f(totIV,0)}`,c:'var(--text2)'},
+          {l:'Total P&L',v:`${totPnL>=0?'+':''}₹${f(Math.abs(totPnL),0)}`,c:pclr},
+          {l:'Returns',v:`${totPct>=0?'+':''}${totPct.toFixed(2)}%`,c:pclr},
+        ].map(s=>(
+          <div key={s.l} style={{background:'var(--surface)',padding:'12px 14px',textAlign:'center'}}>
+            <div style={{fontSize:10,color:'var(--text3)',fontWeight:600,letterSpacing:.8,textTransform:'uppercase',marginBottom:4}}>{s.l}</div>
+            <div style={{fontFamily:"'DM Mono',monospace",fontWeight:500,fontSize:15,color:s.c}}>{s.v}</div>
           </div>
         ))}
       </div>
 
-      {/* Add holding form */}
-      {showAdd && (
-        <div className="p-3 border-b border-border flex gap-2">
-          {['SYMBOL', 'QTY', 'AVG PRICE'].map((lbl, i) => (
-            <input key={lbl} placeholder={lbl}
-              value={[addForm.symbol, addForm.qty, addForm.avgPrice][i]}
-              onChange={e => setAddForm(f => ({ ...f, [['symbol', 'qty', 'avgPrice'][i]]: e.target.value }))}
-              className="flex-1 bg-bg3 border border-border text-gray-200 font-mono text-xs px-2 py-1.5 outline-none focus:border-accent"
-            />
+      {/* Add form */}
+      {showForm && (
+        <div style={{padding:16,borderBottom:'1px solid var(--border)',display:'flex',gap:8,flexWrap:'wrap'}}>
+          {[{p:'Symbol',k:'sym'},{p:'Qty',k:'qty'},{p:'Avg Price',k:'avg'}].map(f2=>(
+            <input key={f2.k} placeholder={f2.p} value={form[f2.k]}
+              onChange={e=>setForm(x=>({...x,[f2.k]:e.target.value}))}
+              className="input" style={{flex:1,minWidth:100,height:38,fontSize:13}}/>
           ))}
-          <button onClick={addHolding} className="btn-accent px-3 py-1.5 text-xs font-display tracking-wider">ADD</button>
+          <button onClick={add} className="btn btn-primary" style={{height:38,padding:'0 16px',fontSize:13}}>Add</button>
         </div>
       )}
 
       {/* Holdings table */}
-      <div className="overflow-x-auto">
-        <table className="w-full" style={{ borderCollapse: 'collapse' }}>
+      <div style={{overflowX:'auto'}}>
+        <table className="data-table" style={{minWidth:640}}>
           <thead>
-            <tr style={{ background: '#0d1825', borderBottom: '1px solid #1a3050' }}>
-              {['Symbol', 'Qty', 'Avg', 'LTP', 'P&L', 'P&L%'].map(h => (
-                <th key={h} className="font-mono text-dim uppercase text-left px-3 py-2" style={{ fontSize: 10 }}>{h}</th>
+            <tr>
+              {['Symbol','Qty','Avg Price','LTP','Curr Value','P&L','Return %',''].map(h=>(
+                <th key={h} style={{textAlign:h===''?'center':'left'}}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {processed.map(h => (
-              <tr key={h.symbol} onClick={() => onSelectSymbol?.(h.symbol)}
-                className="border-b hover:bg-bg3 cursor-pointer transition-colors"
-                style={{ borderColor: '#1a305033' }}>
-                <td className="px-3 py-2 font-display font-bold text-accent" style={{ fontSize: 12 }}>{h.symbol}</td>
-                <td className="px-3 py-2 font-mono text-gray-200" style={{ fontSize: 12 }}>{h.qty}</td>
-                <td className="px-3 py-2 font-mono text-muted" style={{ fontSize: 12 }}>₹{fmt(h.avgPrice)}</td>
-                <td className="px-3 py-2 font-mono text-gray-200" style={{ fontSize: 12 }}>₹{fmt(h.lastPrice)}</td>
-                <td className="px-3 py-2 font-display font-bold" style={{ fontSize: 12, color: h.pnl >= 0 ? '#00ff88' : '#ff3366' }}>
-                  {h.pnl >= 0 ? '+' : ''}₹{fmt(h.pnl, 0)}
-                </td>
-                <td className="px-3 py-2 font-mono" style={{ fontSize: 12, color: h.pnlPct >= 0 ? '#00ff88' : '#ff3366' }}>
-                  {h.pnlPct >= 0 ? '+' : ''}{h.pnlPct.toFixed(2)}%
-                </td>
-              </tr>
-            ))}
+            {rows.map(r => {
+              const clr = r.pnl>=0?'var(--green)':'var(--red)'
+              return (
+                <tr key={r.symbol}>
+                  <td style={{cursor:'pointer'}} onClick={()=>onSelectSymbol?.(r.symbol)}>
+                    <span style={{color:'var(--accent2)',fontWeight:600}}>{r.symbol}</span>
+                  </td>
+                  <td>{r.qty}</td>
+                  <td>₹{f(r.avgPrice)}</td>
+                  <td style={{color:'var(--text)',fontWeight:600}}>₹{f(r.ltp)}</td>
+                  <td>₹{f(r.mv,0)}</td>
+                  <td style={{color:clr}}>{r.pnl>=0?'+':''}₹{f(Math.abs(r.pnl),0)}</td>
+                  <td style={{color:clr}}>{r.pct>=0?'+':''}{r.pct.toFixed(2)}%</td>
+                  <td style={{textAlign:'center'}}>
+                    <button onClick={()=>remove(r.symbol)}
+                      style={{background:'none',border:'none',cursor:'pointer',color:'var(--text3)',fontSize:14}}
+                      onMouseEnter={e=>e.currentTarget.style.color='var(--red)'}
+                      onMouseLeave={e=>e.currentTarget.style.color='var(--text3)'}>✕</button>
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
+      </div>
+
+      <div style={{padding:'10px 16px',borderTop:'1px solid var(--border)',fontSize:11,color:'var(--text3)'}}>
+        Prices are illustrative. Connect Upstox for live portfolio data.
       </div>
     </div>
   )
