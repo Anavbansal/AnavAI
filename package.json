@@ -6,7 +6,7 @@
   "scripts": {
     "api": "node --env-file=.env local-api-server.mjs",
     "dev": "vite",
-    "build": "vite build",
+    "build": "echo \"Backend — no build step needed\"",
     "preview": "vite preview",
     "lint": "echo \"No lint configuration yet\"",
     "lambda:zip": "powershell -Command \"if (Test-Path dist-lambda) { Remove-Item -Recurse -Force dist-lambda }; New-Item -ItemType Directory dist-lambda | Out-Null; Copy-Item -Recurse lambda\\* dist-lambda; Compress-Archive -Path dist-lambda\\* -DestinationPath upstox-lambda.zip -Force\"",
