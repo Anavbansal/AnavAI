@@ -1446,11 +1446,31 @@ const server = http.createServer(async (req, res) => {
 
     // ── OAuth ────────────────────────────────────────────────────────────────
     if (req.method === "GET" && url.pathname === "/auth/url") {
-      const redirectUri = url.searchParams.get("redirect_uri") || process.env.UPSTOX_REDIRECT_URI || "";
+      // Always use server-side redirect URI — never trust frontend value
+      const redirectUri = process.env.UPSTOX_ALGO_REDIRECT_URI
+                       || process.env.UPSTOX_REDIRECT_URI
+                       || "https://anavai.onrender.com/auth/callback";
+      const clientId    = process.env.UPSTOX_ALGO_CLIENT_ID
+                       || process.env.UPSTOX_CLIENT_ID || "";
       const state = `anavai-${Date.now()}`;
+
+      console.log(`[Auth URL] clientId=${clientId?.slice(0,8)}... redirectUri=${redirectUri}`);
+
+      if (!clientId) {
+        writeJson(req, res, 400, { status:"error", message:"UPSTOX_ALGO_CLIENT_ID not set in environment" });
+        return;
+      }
+
       try {
-        const authUrl = UpstoxSDK.getAuthorizationUrl(redirectUri, state);
-        writeJson(req, res, 200, { status:"success", data:{ authorizationUrl:authUrl, state }});
+        // Build auth URL directly — don't rely on SDK CONFIG which may have cached old values
+        const params = new URLSearchParams({
+          response_type: "code",
+          client_id:     clientId,
+          redirect_uri:  redirectUri,
+          state,
+        });
+        const authorizationUrl = `https://api.upstox.com/v2/login/authorization/dialog?${params.toString()}`;
+        writeJson(req, res, 200, { status:"success", data:{ authorizationUrl, state, redirectUri, clientId: clientId.slice(0,8)+"..." }});
       } catch (err) {
         writeJson(req, res, 400, { status:"error", message: err.message });
       }
@@ -1460,8 +1480,34 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/auth/exchange") {
       const body = await readBody(req);
       try {
-        const tokenData = await UpstoxSDK.exchangeAuthCode(body.code, body.redirectUri);
-        writeJson(req, res, 200, { status:"success", data: tokenData });
+        const clientId     = process.env.UPSTOX_ALGO_CLIENT_ID     || process.env.UPSTOX_CLIENT_ID     || "";
+        const clientSecret = process.env.UPSTOX_ALGO_CLIENT_SECRET  || process.env.UPSTOX_CLIENT_SECRET || "";
+        const redirectUri  = process.env.UPSTOX_ALGO_REDIRECT_URI   || process.env.UPSTOX_REDIRECT_URI  || "https://anavai.onrender.com/auth/callback";
+
+        console.log(`[Auth Exchange] code=${body.code?.slice(0,10)}... clientId=${clientId?.slice(0,8)}...`);
+
+        const formData = new URLSearchParams({
+          code:          body.code,
+          client_id:     clientId,
+          client_secret: clientSecret,
+          redirect_uri:  redirectUri,
+          grant_type:    "authorization_code",
+        });
+
+        const res2 = await fetch("https://api.upstox.com/v2/login/authorization/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json" },
+          body: formData.toString(),
+        });
+
+        const tokenData = await res2.json();
+        console.log(`[Auth Exchange] status=${res2.status} access_token=${tokenData?.access_token ? "YES" : "NO"}`);
+
+        if (res2.ok && tokenData?.access_token) {
+          writeJson(req, res, 200, { status:"success", data: tokenData });
+        } else {
+          writeJson(req, res, 400, { status:"error", message: JSON.stringify(tokenData) });
+        }
       } catch (err) {
         writeJson(req, res, 400, { status:"error", message: err.message });
       }
