@@ -25,8 +25,8 @@ if (existsSync(envPath)) {
   }
 }
 
-const PORT = Number(process.env.LOCAL_API_PORT || 3002);
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGIN || process.env.FRONTEND_URL || "*")
+const PORT = Number(process.env.PORT || process.env.LOCAL_API_PORT || 3002);
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGIN || process.env.FRONTEND_URL || "https://*.vercel.app,https://*.onrender.com,http://localhost:5173,http://localhost:3000")
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
@@ -1051,7 +1051,7 @@ ${JSON.stringify({
 // ─── HTTP Server ─────────────────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") { writeJson(req, res, 200, { ok: true }); return; }
-  const url   = new URL(req.url, `http://127.0.0.1:${PORT}`);
+  const url   = new URL(req.url, `http://0.0.0.0:${PORT}`);
   const token = getToken(req);
 
   try {
