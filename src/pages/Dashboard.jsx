@@ -15,141 +15,142 @@ import AIAssistant from '../components/AIAssistant'
 import { useAnalysis } from '../hooks/useAnalysis'
 
 const TABS = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'intraday', label: '⚡ Intraday' },
-  { id: 'delivery', label: '📦 Delivery' },
-  { id: 'fogreeks', label: '⚙ F&O Greeks' },
-  { id: 'portfolio', label: '💼 Portfolio' },
-  { id: 'mf', label: '🏦 Mutual Funds' },
+  { id:'overview',  label:'Overview',     icon:'📊' },
+  { id:'intraday',  label:'Intraday',     icon:'⚡' },
+  { id:'delivery',  label:'Delivery',     icon:'📦' },
+  { id:'fogreeks',  label:'F&O Greeks',   icon:'⚙' },
+  { id:'portfolio', label:'Portfolio',    icon:'💼' },
+  { id:'mf',        label:'Mutual Funds', icon:'🏦' },
 ]
+
+const TAB_MODE = { overview:'tech', intraday:'intraday', delivery:'delivery', fogreeks:'fo', portfolio:'tech', mf:'tech' }
 
 export default function Dashboard() {
   const [tab, setTab] = useState('overview')
   const { data, ai, loading, error, analyze } = useAnalysis()
   const [symbol, setSymbol] = useState('NIFTY')
+  const [curSym, setCurSym] = useState('NIFTY')
+  const [curTf, setCurTf]   = useState('5')
 
-  useEffect(() => {
-    analyze('NIFTY', '5')
-  }, [])
+  useEffect(() => { analyze('NIFTY', '5', 'tech') }, [])
+
+  function handleTabChange(t) {
+    setTab(t)
+    if (['portfolio','mf'].includes(t)) return
+    const mode = TAB_MODE[t] || 'tech'
+    const tf   = t==='delivery' ? 'D' : curTf
+    analyze(curSym, tf, mode)
+  }
 
   function handleAnalyze(sym, tf) {
-    const displaySymbol = typeof sym === 'string' ? sym : (sym?.symbol || 'NIFTY')
-    setSymbol(displaySymbol)
-    analyze(sym, tf)
+    const s = typeof sym==='string' ? sym : (sym?.symbol||'NIFTY')
+    setSymbol(s); setCurSym(sym); setCurTf(tf)
+    const mode = TAB_MODE[tab] || 'tech'
+    analyze(sym, tab==='delivery'?'D':tf, mode)
   }
 
-  function handleSelectSymbol(sym) {
-    setSymbol(sym)
-    analyze(sym, '5')
+  function handleSelectSymbol(s) {
+    setSymbol(s); setCurSym(s)
+    analyze(s,'5','tech')
     setTab('overview')
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    window.scrollTo({top:0,behavior:'smooth'})
   }
+
+  const instKey = data?.instrumentKey || ''
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ position: 'relative', zIndex: 1 }}>
-      <Header />
+    <div style={{minHeight:'100vh',display:'flex',flexDirection:'column',background:'#0b0f19'}}>
+      <Header/>
 
-      <main className="flex-1 p-3 flex flex-col gap-3">
+      <main style={{flex:1,padding:'16px 20px',display:'flex',flexDirection:'column',gap:14,maxWidth:1600,margin:'0 auto',width:'100%'}}>
         {/* Search */}
-        <SearchBar onAnalyze={handleAnalyze} loading={loading} />
+        <SearchBar onAnalyze={handleAnalyze} loading={loading}/>
 
         {/* Tabs */}
-        <div className="flex gap-1 flex-wrap">
-          {TABS.map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)}
-              className={`font-mono border px-3 py-1.5 transition-all text-xs ${tab === t.id ? 'border-accent text-accent bg-accent/10' : 'border-border text-muted hover:border-accent/50 hover:text-accent/70'}`}>
-              {t.label}
+        <div style={{display:'flex',gap:4,background:'#111827',borderRadius:10,padding:4,width:'fit-content',border:'1px solid #1f2d45'}}>
+          {TABS.map(t=>(
+            <button key={t.id} onClick={()=>handleTabChange(t.id)}
+              className={`tab-btn ${tab===t.id?'active':''}`}
+              style={{fontSize:13,padding:'6px 14px',display:'flex',alignItems:'center',gap:5}}>
+              <span>{t.icon}</span>{t.label}
             </button>
           ))}
         </div>
 
         {/* Error */}
         {error && (
-          <div className="font-mono text-danger border border-danger px-3 py-2" style={{ background: 'rgba(255,51,102,0.05)', fontSize: 12 }}>
+          <div style={{padding:'10px 14px',background:'#7f1d1d20',border:'1px solid #ef444433',borderRadius:8,color:'#ef4444',fontSize:13}}>
             ⚠ {error}
           </div>
         )}
 
-        {/* Loading skeleton */}
+        {/* Loading */}
         {loading && (
-          <div className="panel flex items-center justify-center py-6 gap-4">
-            <div className="animate-spin-slow w-8 h-8 rounded-full border-2 border-border" style={{ borderTopColor: '#00d4ff' }} />
-            <div className="font-mono text-accent animate-blink" style={{ fontSize: 12, letterSpacing: 2 }}>
-              ANALYZING {symbol}...
+          <div style={{display:'flex',alignItems:'center',gap:12,padding:'20px',background:'#151c2c',borderRadius:12,border:'1px solid #1f2d45'}}>
+            <div className="animate-spin" style={{width:24,height:24,border:'3px solid #1f2d45',borderTopColor:'#6366f1',borderRadius:'50%',flexShrink:0}}/>
+            <div>
+              <div style={{fontSize:14,fontWeight:600,color:'#f1f5f9'}}>Analyzing {symbol}...</div>
+              <div style={{fontSize:12,color:'#64748b',marginTop:2}}>Fetching real-time data and running AI analysis</div>
             </div>
           </div>
         )}
 
-        {/* OVERVIEW TAB */}
-        {tab === 'overview' && !loading && (
-          <div className="flex flex-col gap-3">
-            {/* Top row: price panel + chart */}
-            <div className="grid gap-3" style={{ gridTemplateColumns: 'minmax(280px,320px) 1fr' }}>
-              <PricePanel data={data} ai={ai} />
-              <CandleChart data={data} ai={ai} />
+        {/* OVERVIEW */}
+        {tab==='overview' && !loading && (
+          <div style={{display:'flex',flexDirection:'column',gap:14}}>
+            <div style={{display:'grid',gap:14,gridTemplateColumns:'320px 1fr'}}>
+              <PricePanel data={data} ai={ai} loading={loading}/>
+              <CandleChart data={data} ai={ai}/>
             </div>
-            {/* Middle row: AI insights + News */}
-            <div className="grid grid-cols-2 gap-3">
-              <AIInsights ai={ai} data={data} loading={loading} />
-              <NewsPanel symbol={symbol} news={data?.latestNews} />
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+              <AIInsights ai={ai} data={data} loading={loading}/>
+              <NewsPanel symbol={symbol} instrumentKey={instKey} news={data?.latestNews}/>
             </div>
-            {/* Bottom row: Company Fundamentals */}
-            <div className="grid grid-cols-1 gap-3">
-              <CompanyFundamentals symbol={data?.symbol || symbol} />
+            <CompanyFundamentals symbol={data?.symbol||symbol} instrumentKey={instKey}/>
+          </div>
+        )}
+
+        {/* INTRADAY */}
+        {tab==='intraday' && !loading && (
+          <div style={{display:'grid',gridTemplateColumns:'360px 1fr',gap:14}}>
+            <Intraday data={data} ai={ai}/>
+            <div style={{display:'flex',flexDirection:'column',gap:14}}>
+              <CandleChart data={data} ai={ai}/>
+              <AIInsights ai={ai} data={data} loading={loading}/>
             </div>
           </div>
         )}
 
-        {/* INTRADAY TAB */}
-        {tab === 'intraday' && !loading && (
-          <div className="grid grid-cols-2 gap-3">
-            <Intraday data={data} ai={ai} />
-            <div className="flex flex-col gap-3">
-              <CandleChart data={data} ai={ai} />
-              <AIInsights ai={ai} data={data} loading={loading} />
+        {/* DELIVERY */}
+        {tab==='delivery' && !loading && (
+          <div style={{display:'grid',gridTemplateColumns:'360px 1fr',gap:14}}>
+            <Delivery data={data} ai={ai}/>
+            <div style={{display:'flex',flexDirection:'column',gap:14}}>
+              <CandleChart data={data} ai={ai}/>
+              <NewsPanel symbol={symbol} instrumentKey={instKey} news={data?.latestNews}/>
             </div>
           </div>
         )}
 
-        {/* DELIVERY TAB */}
-        {tab === 'delivery' && !loading && (
-          <div className="grid grid-cols-2 gap-3">
-            <Delivery data={data} ai={ai} />
-            <div className="flex flex-col gap-3">
-              <PricePanel data={data} ai={ai} />
-              <NewsPanel symbol={symbol} news={data?.latestNews} />
+        {/* F&O */}
+        {tab==='fogreeks' && !loading && (
+          <div style={{display:'flex',flexDirection:'column',gap:14}}>
+            <FOGreeks data={data}/>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+              <AIInsights ai={ai} data={data} loading={loading}/>
+              <PricePanel data={data} ai={ai}/>
             </div>
           </div>
         )}
 
-        {/* F&O GREEKS TAB */}
-        {tab === 'fogreeks' && !loading && (
-          <div className="flex flex-col gap-3">
-            <FOGreeks data={data} />
-            <div className="grid grid-cols-2 gap-3">
-              <AIInsights ai={ai} data={data} loading={loading} />
-              <PricePanel data={data} ai={ai} />
-            </div>
-          </div>
-        )}
-
-        {/* PORTFOLIO TAB */}
-        {tab === 'portfolio' && (
-          <Portfolio onSelectSymbol={handleSelectSymbol} />
-        )}
-
-        {/* MUTUAL FUNDS TAB */}
-        {tab === 'mf' && (
-          <MutualFunds />
-        )}
+        {tab==='portfolio' && <Portfolio onSelectSymbol={handleSelectSymbol}/>}
+        {tab==='mf' && <MutualFunds/>}
       </main>
 
-      {/* AI Assistant floating chat */}
-      <AIAssistant data={data} ai={ai} />
+      <AIAssistant data={data} ai={ai}/>
 
-      {/* Footer */}
-      <footer className="text-center font-mono text-dim py-3 border-t border-border" style={{ fontSize: 10, letterSpacing: 1 }}>
-        ⚠ FOR EDUCATIONAL USE ONLY · NOT SEBI INVESTMENT ADVICE · PAST PERFORMANCE ≠ FUTURE RESULTS · TRADE AT YOUR OWN RISK
+      <footer style={{textAlign:'center',padding:'12px',borderTop:'1px solid #1f2d45',fontSize:11,color:'#334155',background:'#0e1420'}}>
+        ⚠ For personal educational use only · Not SEBI investment advice · Trade at your own risk
       </footer>
     </div>
   )

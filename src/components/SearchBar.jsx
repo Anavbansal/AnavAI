@@ -2,101 +2,90 @@ import React, { useState, useEffect, useRef } from 'react'
 import { searchSymbol } from '../services/marketData'
 
 const QUICK = [
-  { label:'NIFTY 50',   sym:'NIFTY' },
-  { label:'BANK NIFTY', sym:'BANKNIFTY' },
-  { label:'FIN NIFTY',  sym:'FINNIFTY' },
-  { label:'RELIANCE',   sym:'RELIANCE' },
-  { label:'TCS',        sym:'TCS' },
-  { label:'HDFCBANK',   sym:'HDFCBANK' },
-  { label:'INFY',       sym:'INFY' },
-  { label:'ICICIBANK',  sym:'ICICIBANK' },
-  { label:'SBIN',       sym:'SBIN' },
-  { label:'WIPRO',      sym:'WIPRO' },
-  { label:'BAJFINANCE', sym:'BAJFINANCE' },
-  { label:'ADANIENT',   sym:'ADANIENT' },
+  {label:'NIFTY 50',sym:'NIFTY'},{label:'BANK NIFTY',sym:'BANKNIFTY'},
+  {label:'RELIANCE',sym:'RELIANCE'},{label:'TCS',sym:'TCS'},
+  {label:'HDFCBANK',sym:'HDFCBANK'},{label:'INFY',sym:'INFY'},
+  {label:'ICICIBANK',sym:'ICICIBANK'},{label:'SBIN',sym:'SBIN'},
+  {label:'WIPRO',sym:'WIPRO'},{label:'BAJFINANCE',sym:'BAJFINANCE'},
 ]
 
-const TIMEFRAMES = [
-  {label:'1m',val:'1'},{label:'3m',val:'3'},{label:'5m',val:'5'},
-  {label:'15m',val:'15'},{label:'30m',val:'30'},{label:'1H',val:'60'},{label:'D',val:'D'},
+const TFS = [
+  {l:'1m',v:'1'},{l:'3m',v:'3'},{l:'5m',v:'5'},
+  {l:'15m',v:'15'},{l:'30m',v:'30'},{l:'1H',v:'60'},{l:'D',v:'D'},
 ]
 
 export default function SearchBar({ onAnalyze, loading }) {
-  const [symbol, setSymbol] = useState('NIFTY')
-  const [tf, setTf]         = useState('5')
-  const [suggestions, setSuggestions] = useState([])
-  const [showSug, setShowSug] = useState(false)
-  const inputRef = useRef(null)
+  const [sym, setSym]   = useState('NIFTY')
+  const [tf, setTf]     = useState('5')
+  const [sugg, setSugg] = useState([])
+  const [show, setShow] = useState(false)
+  const ref = useRef()
 
-  useEffect(() => {
-    let cancelled = false
-    const q = symbol.trim()
-    if (q.length < 2) {
-      setSuggestions([])
-      return
-    }
+  useEffect(()=>{
+    let c=false
+    if (sym.trim().length<2) { setSugg([]); return }
+    const t=setTimeout(async()=>{
+      try { const r=await searchSymbol(sym); if(!c) setSugg(r.slice(0,8)) }
+      catch { if(!c) setSugg([]) }
+    },200)
+    return ()=>{ c=true; clearTimeout(t) }
+  },[sym])
 
-    const timer = setTimeout(async () => {
-      try {
-        const matches = await searchSymbol(q)
-        if (!cancelled) setSuggestions(matches.slice(0, 8))
-      } catch {
-        if (!cancelled) setSuggestions([])
-      }
-    }, 200)
-
-    return () => {
-      cancelled = true
-      clearTimeout(timer)
-    }
-  }, [symbol])
-
-  function submit(input = symbol, t = tf) {
-    const raw = typeof input === 'string' ? input : input?.tradingSymbol || input?.symbol || ''
-    const clean = raw.trim().toUpperCase()
-    if (!clean) return
-    setSymbol(clean)
-    setSuggestions([])
-    setShowSug(false)
-    if (typeof input === 'string') {
-      onAnalyze(clean, t)
-      return
-    }
-    onAnalyze({ symbol: clean, instrumentKey: input?.instrumentKey || '' }, t)
-  }
-
-  function pickSuggestion(item) {
-    submit(item, tf)
+  function go(input=sym, t=tf) {
+    const raw=typeof input==='string'?input:(input?.tradingSymbol||input?.symbol||'')
+    const clean=raw.trim().toUpperCase()
+    if(!clean) return
+    setSym(clean); setSugg([]); setShow(false)
+    if(typeof input==='string') onAnalyze(clean,t)
+    else onAnalyze({symbol:clean,instrumentKey:input?.instrumentKey||''},t)
   }
 
   return (
-    <div className="flex flex-col gap-2 mb-3">
-      <div className="flex gap-2">
-        {/* Symbol input with autocomplete */}
-        <div className="relative flex-1">
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-accent" style={{ fontSize:16 }}>⌕</span>
+    <div style={{display:'flex',flexDirection:'column',gap:10}}>
+      <div style={{display:'flex',gap:8,alignItems:'stretch'}}>
+        {/* Search input */}
+        <div style={{flex:1,position:'relative'}}>
+          <svg style={{position:'absolute',left:12,top:'50%',transform:'translateY(-50%)',color:'#475569'}} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+          </svg>
           <input
-            ref={inputRef}
-            value={symbol}
-            onChange={e => { setSymbol(e.target.value.toUpperCase()); setShowSug(true) }}
-            onKeyDown={e => e.key === 'Enter' && submit()}
-            onFocus={() => setShowSug(true)}
-            onBlur={() => setTimeout(() => setShowSug(false), 150)}
-            placeholder="NIFTY / RELIANCE / HDFCBANK / TCS..."
-            className="w-full bg-panel border border-border text-gray-200 font-mono text-sm outline-none focus:border-accent transition-colors"
-            style={{ padding:'10px 12px 10px 36px', letterSpacing:1 }}
+            ref={ref}
+            value={sym}
+            onChange={e=>{setSym(e.target.value.toUpperCase());setShow(true)}}
+            onKeyDown={e=>e.key==='Enter'&&go()}
+            onFocus={()=>setShow(true)}
+            onBlur={()=>setTimeout(()=>setShow(false),150)}
+            placeholder="Search stock, index, F&O..."
+            className="input"
+            style={{paddingLeft:40,height:44,fontSize:14,fontFamily:'Inter'}}
           />
-          {/* Suggestions dropdown */}
-          {showSug && suggestions.length > 0 && (
-            <div className="absolute top-full left-0 right-0 z-50 border border-border" style={{ background:'#0a1520', marginTop:2 }}>
-              {suggestions.map(item => (
-                <div key={item.instrumentKey || item.symbol} onMouseDown={() => pickSuggestion(item)}
-                  className="px-3 py-2 cursor-pointer hover:bg-bg3 font-mono text-sm text-gray-200 border-b border-border/40 last:border-0"
-                  style={{ letterSpacing:1 }}>
-                  <span className="text-accent">{item.tradingSymbol || item.symbol}</span>
-                  <span className="text-dim"> {item.exchange} {item.segment}</span>
-                  <div className="text-dim" style={{ fontSize: 11 }}>
-                    {item.name}
+          {/* Suggestions */}
+          {show && sugg.length>0 && (
+            <div style={{
+              position:'absolute',top:'calc(100% + 4px)',left:0,right:0,zIndex:200,
+              background:'#151c2c',border:'1px solid #2a3f5f',borderRadius:10,
+              boxShadow:'0 8px 32px rgba(0,0,0,0.5)',overflow:'hidden',
+            }}>
+              {sugg.map(item=>(
+                <div key={item.instrumentKey||item.symbol}
+                  onMouseDown={()=>go(item)}
+                  style={{
+                    padding:'10px 14px',cursor:'pointer',
+                    borderBottom:'1px solid #1f2d45',
+                    display:'flex',justifyContent:'space-between',alignItems:'center',
+                    transition:'background .1s',
+                  }}
+                  onMouseEnter={e=>e.currentTarget.style.background='#1a2235'}
+                  onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                  <div>
+                    <div style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:13,color:'#f1f5f9'}}>
+                      {item.tradingSymbol||item.symbol}
+                    </div>
+                    <div style={{fontSize:11,color:'#64748b',marginTop:1}}>{item.name}</div>
+                  </div>
+                  <div style={{display:'flex',gap:6}}>
+                    <span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#1f2d45',color:'#94a3b8',fontFamily:'JetBrains Mono'}}>{item.exchange}</span>
+                    {item.segment && <span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#6366f120',color:'#6366f1',fontFamily:'JetBrains Mono'}}>{item.segment}</span>}
                   </div>
                 </div>
               ))}
@@ -104,36 +93,38 @@ export default function SearchBar({ onAnalyze, loading }) {
           )}
         </div>
 
-        {/* Timeframe buttons */}
-        <div className="flex gap-1">
-          {TIMEFRAMES.map(t => (
-            <button key={t.val} onClick={() => setTf(t.val)}
-              className={`font-mono border px-2.5 py-2 transition-all text-xs ${
-                tf === t.val
-                  ? 'border-accent text-accent bg-accent/10'
-                  : 'border-border text-muted hover:border-accent hover:text-accent'
-              }`}>
-              {t.label}
-            </button>
+        {/* Timeframe */}
+        <div style={{display:'flex',gap:3,background:'#111827',borderRadius:8,padding:3,border:'1px solid #1f2d45'}}>
+          {TFS.map(t=>(
+            <button key={t.v} onClick={()=>setTf(t.v)} style={{
+              padding:'4px 10px',borderRadius:6,cursor:'pointer',border:'none',
+              fontFamily:'JetBrains Mono',fontSize:11,fontWeight:600,transition:'all .15s',
+              background:tf===t.v?'#1e2a3d':'transparent',
+              color:tf===t.v?'#f1f5f9':'#64748b',
+              ...(tf===t.v?{border:'1px solid #2a3f5f'}:{}),
+            }}>{t.l}</button>
           ))}
         </div>
 
-        <button onClick={() => submit()} disabled={loading}
-          className="btn-accent px-5 py-2 font-display font-bold tracking-widest text-xs">
-          {loading ? '⟳ LOADING...' : '▶ ANALYZE'}
+        <button onClick={()=>go()} disabled={loading} className="btn btn-primary" style={{height:44,padding:'0 20px',fontSize:14,whiteSpace:'nowrap'}}>
+          {loading
+            ? <span style={{display:'flex',alignItems:'center',gap:8}}><div className="animate-spin" style={{width:16,height:16,border:'2px solid #ffffff40',borderTopColor:'#fff',borderRadius:'50%'}}/>Analyzing...</span>
+            : '▶ Analyze'}
         </button>
       </div>
 
-      {/* Quick symbol chips */}
-      <div className="flex flex-wrap gap-1.5">
-        {QUICK.map(q => (
-          <button key={q.sym} onClick={() => { setSymbol(q.sym); submit(q.sym, tf) }}
-            className={`font-mono border px-3 py-1 transition-all text-xs ${
-              symbol === q.sym
-                ? 'border-accent2 text-accent2 bg-accent2/5'
-                : 'border-border text-muted hover:border-accent2 hover:text-accent2'
-            }`}
-            style={{ background:'#0d1825' }}>
+      {/* Quick chips */}
+      <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+        {QUICK.map(q=>(
+          <button key={q.sym} onClick={()=>{setSym(q.sym);go(q.sym,tf)}} style={{
+            padding:'4px 12px',borderRadius:20,cursor:'pointer',
+            border:`1px solid ${sym===q.sym?'#6366f1':'#1f2d45'}`,
+            background:sym===q.sym?'#6366f115':'#111827',
+            color:sym===q.sym?'#a5b4fc':'#64748b',
+            fontSize:12,fontWeight:500,transition:'all .15s',
+          }}
+          onMouseEnter={e=>{if(sym!==q.sym){e.currentTarget.style.borderColor='#2a3f5f';e.currentTarget.style.color='#94a3b8'}}}
+          onMouseLeave={e=>{if(sym!==q.sym){e.currentTarget.style.borderColor='#1f2d45';e.currentTarget.style.color='#64748b'}}}>
             {q.label}
           </button>
         ))}
