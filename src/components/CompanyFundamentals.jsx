@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { getInstrumentBySymbol } from '../utils/instrumentSearch'
+import { searchSymbol } from '../services/marketData'
 import { getCompanyFundamentals } from '../lib/api'
 
 const RATIO_LABELS = {
@@ -13,9 +13,6 @@ const RATIO_LABELS = {
   book_value_per_share: 'Book Value',
   market_cap: 'Market Cap',
   sector_pe: 'Sector P/E',
-  face_value: 'Face Value',
-  week52High: '52W High',
-  week52Low: '52W Low',
 }
 
 function formatRatioValue(key, val) {
@@ -42,48 +39,37 @@ export default function CompanyFundamentals({ symbol }) {
         setProfile(null);
         setRatios(null);
 
+        // The Upstox Fundamentals API relies on ISINs, we extract this using our search API
+        const searchRes = await searchSymbol(symbol);
+        const match = searchRes.find(r => 
+          r.symbol === symbol || r.tradingSymbol === symbol || r.name?.toUpperCase().includes(symbol)
+        );
+        const isin = match?.isin || match?.info?.isin;
+
+        if (!isin) {
+          throw new Error(`ISIN not found for ${symbol}. Fundamentals require an ISIN.`);
+        }
+
         const token = localStorage.getItem('upstox_access_token') || null;
 
-        // Get instrument details for ISIN (optional)
-        let isin = '';
-        try {
-          const instrument = getInstrumentBySymbol(symbol);
-          isin = instrument?.isin || '';
-        } catch { /* ok */ }
-
-        // Fetch from our server's /fundamentals route (uses NSE free API)
-        const BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3002').replace(/\/$/, '');
-        const params = new URLSearchParams({ symbol, type: 'profile' });
-        if (isin) params.set('isin', isin);
-
-        const resp = await fetch(`${BASE}/fundamentals?${params.toString()}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {}
-        });
+        // We fetch profile outline and financial ratios concurrently
+        const [profRes, ratRes] = await Promise.allSettled([
+          getCompanyFundamentals(token, { isin, type: 'profile' }),
+          getCompanyFundamentals(token, { isin, type: 'key-ratios' })
+        ]);
 
         if (isMounted) {
-          if (resp.ok) {
-            const data = await resp.json();
-            if (data?.status === 'success' && data?.data) {
-              const d = data.data;
-              setProfile(d);
-              // Extract ratio fields into a structured object
-              const ratioFields = {
-                pe_ratio: d.pe_ratio,
-                pb_ratio: d.pb_ratio,
-                eps: d.eps,
-                dividend_yield: d.dividend_yield,
-                market_cap: d.market_cap,
-                face_value: d.face_value,
-                week52High: d.week52High,
-                week52Low: d.week52Low,
-              };
-              const hasRatios = Object.values(ratioFields).some(v => v != null);
-              if (hasRatios) setRatios(ratioFields);
-            } else {
-              setError('Fundamental data unavailable for this symbol.');
-            }
-          } else {
-            setError('Failed to load fundamentals. Server may be offline.');
+          let loadedAny = false;
+          if (profRes.status === 'fulfilled' && profRes.value?.status === 'success') {
+            setProfile(profRes.value.data);
+            loadedAny = true;
+          }
+          if (ratRes.status === 'fulfilled' && ratRes.value?.status === 'success') {
+            setRatios(ratRes.value.data);
+            loadedAny = true;
+          }
+          if (!loadedAny) {
+             setError('Fundamental data unavailable for this instrument.');
           }
         }
       } catch (err) {

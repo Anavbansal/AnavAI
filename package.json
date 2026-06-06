@@ -9,7 +9,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "echo \"No lint configuration yet\"",
-    "lambda:zip": "powershell -Command \"if (Test-Path dist-lambda) { Remove-Item -Recurse -Force dist-lambda }; New-Item -ItemType Directory dist-lambda | Out-Null; Copy-Item -Recurse lambda\\* dist-lambda; Compress-Archive -Path dist-lambda\\* -DestinationPath upstox-lambda.zip -Force\""
+    "lambda:zip": "powershell -Command \"if (Test-Path dist-lambda) { Remove-Item -Recurse -Force dist-lambda }; New-Item -ItemType Directory dist-lambda | Out-Null; Copy-Item -Recurse lambda\\* dist-lambda; Compress-Archive -Path dist-lambda\\* -DestinationPath upstox-lambda.zip -Force\"",
+    "start": "node local-api-server.mjs",
+    "start:prod": "NODE_ENV=production node local-api-server.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.383.0",
@@ -22,7 +24,8 @@
     "autoprefixer": "^10.4.21",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
-    "vite": "^5.4.10"
+    "vite": "^5.4.10",
+    "@vitejs/plugin-react": "^4.3.1"
   },
   "engines": {
     "node": ">=18.0.0",

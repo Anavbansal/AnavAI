@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react'
 import { getMarketNews } from '../lib/api'
-import { getInstrumentBySymbol } from '../utils/instrumentSearch'
+import { searchSymbol } from '../services/marketData'
 
 const SENTIMENT_STYLES = {
   BULLISH: { color: '#00ff88', bg: 'rgba(0,255,136,0.12)', border: 'rgba(0,255,136,0.3)' },
@@ -30,35 +30,24 @@ export default function NewsPanel({ symbol, instrumentKey, news: backendNews = [
         setLoading(true);
         let key = instrumentKey;
 
-        // Get the exact instrument_key from complete.json if not provided
+        // Try to obtain the exact instrument_key from Upstox via search if omitted
         if (!key && symbol) {
-          const instrument = getInstrumentBySymbol(symbol);
-          if (instrument?.instrumentKey) {
-            key = instrument.instrumentKey;
+          const results = await searchSymbol(symbol);
+          const match = results.find(r => r.symbol === symbol || r.symbol?.includes(symbol));
+          if (match && (match.instrument_key || match.instrumentKey)) {
+            key = match.instrument_key || match.instrumentKey;
           }
         }
 
-        if (!key) {
-          console.warn('No instrumentKey found for symbol:', symbol);
-          return;
-        }
+        if (!key) return; // Fallback entirely to backendNews if key is still missing
 
         const token = localStorage.getItem('upstox_access_token') || null;
         const res = await getMarketNews(token, { category: 'instrument_keys', instrument_keys: key });
         
-        if (isMounted && res?.status === 'success' && res?.data) {
-          // Handle both Upstox format and Google RSS fallback format
-          // Response format: { data: { [instrument_key]: [...articles], ... }, ... }
-          let articles = res.data[key] || Object.values(res.data)?.[0] || [];
-          // RSS fallback uses the raw key string as property
-          if (!Array.isArray(articles) || articles.length === 0) {
-            const firstVal = Object.values(res.data || {})[0];
-            articles = Array.isArray(firstVal) ? firstVal : [];
-          }
-          if (Array.isArray(articles) && articles.length > 0) {
+        if (isMounted && res.status === 'success' && res.data) {
+          const articles = Array.isArray(res.data) ? res.data : (res.data[key] || Object.values(res.data)[0]);
+          if (Array.isArray(articles)) {
             setUpstoxNews(articles);
-          } else {
-            setUpstoxNews([]);
           }
         }
       } catch (err) {
@@ -75,28 +64,20 @@ export default function NewsPanel({ symbol, instrumentKey, news: backendNews = [
   const news = useMemo(() => {
     if (upstoxNews && upstoxNews.length > 0) {
       return upstoxNews.slice(0, 7).map((item, index) => {
-        // Upstox API returns published_time as Unix timestamp in milliseconds
-        const publishedMs = Number(item?.published_time) || Date.now();
+        // Unify timestamp structures from the Upstox API
+        const ts = item?.publishedAt || item?.published_timestamp || item?.timestamp || Date.now();
+        const publishedMs = Number(ts) > 1e11 ? Number(ts) : new Date(ts).getTime();
         const mins = Number.isFinite(publishedMs)
           ? Math.max(0, Math.round((Date.now() - publishedMs) / 60000))
           : NaN
 
-        const title = item?.heading ?? item?.title ?? 'Market update';
-        const titleLower = title.toLowerCase();
-        let sentiment = 'NEUTRAL';
-        const bullishKw = ['surge', 'rally', 'gain', 'rise', 'profit', 'record', 'high', 'buy', 'upgrade', 'beat', 'growth', 'strong', 'outperform'];
-        const bearishKw = ['fall', 'drop', 'crash', 'loss', 'decline', 'sell', 'downgrade', 'miss', 'weak', 'concern', 'risk', 'cut', 'slump'];
-        if (bullishKw.some(k => titleLower.includes(k))) sentiment = 'BULLISH';
-        else if (bearishKw.some(k => titleLower.includes(k))) sentiment = 'BEARISH';
         return {
           id: item?.id ?? `upstox-news-${index}`,
-          title,
-          source: item?.source ?? 'News',
-          sentiment,
+          title: item?.headline ?? item?.title ?? 'Market update',
+          source: item?.source ?? 'Upstox',
+          sentiment: 'NEUTRAL', // Native Upstox API lacks sentiment tagging out-of-the-box
           mins,
-          url: item?.article_link ?? item?.url ?? null,
-          thumbnail: item?.thumbnail ?? null,
-          summary: item?.summary ?? null,
+          url: item?.link ?? item?.url ?? null,
         }
       })
     }
@@ -114,11 +95,9 @@ export default function NewsPanel({ symbol, instrumentKey, news: backendNews = [
         sentiment: item?.sentiment ?? 'NEUTRAL',
         mins,
         url: item?.url ?? null,
-        thumbnail: item?.thumbnail ?? null,
-        summary: item?.summary ?? null,
       }
     })
-  }, [upstoxNews, backendNews])
+  }, [backendNews])
 
   return (
     <div className="panel animate-fadein">

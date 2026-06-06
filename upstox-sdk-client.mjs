@@ -1,5 +1,5 @@
 /**
- * UPSTOX API CLIENT — Secure wrapper for Upstox API
+ * UPSTOX SDK CLIENT — Secure wrapper for Upstox API
  * Replaced the official SDK with direct fetch() calls because the SDK 
  * relies on callbacks and has poor Promise support.
  * All credentials managed via environment variables (.env)
@@ -59,7 +59,7 @@ function initializeClients(token) {
 }
 
 /**
- * Get initialized clients (kept for compatibility)
+ * Get initialized clients (kept for compatibility with local-api-server.mjs)
  * @param {string} token - Optional token override
  * @returns {object} Empty object as SDK clients are deprecated
  */
@@ -70,7 +70,7 @@ function getClients(token) {
     throw new Error('No access token available. Provide token or set UPSTOX_SANDBOX_ACCESS_TOKEN in .env')
   }
 
-  // We no longer use the official client objects.
+  // We no longer use the SDK client objects.
   return {}
 }
 
@@ -120,45 +120,24 @@ async function upstoxFetch(path, token, method = 'GET', body = null) {
  * @param {string} token - Optional token override
  * @returns {array} Array of candles [timestamp, open, high, low, close, volume]
  */
-/**
- * V3 Intraday Candle API
- * URL: GET /v3/historical-candle/intraday/{instrument_key}/{unit}/{interval}
- * unit: 'minutes' | 'hours' | 'days'
- * interval: 1-300 for minutes, 1-5 for hours, 1 for days
- */
-export async function getIntradayCandles(instrumentKey, interval = '5', token) {
+export async function getIntradayCandles(instrumentKey, interval = '30minute', token) {
   if (!instrumentKey) throw new Error('instrumentKey is required')
 
   try {
-    const { unit, ivl } = resolveIntradayInterval(interval)
-    const encodedKey = encodeURIComponent(instrumentKey)
-    const path = `/v3/historical-candle/intraday/${encodedKey}/${unit}/${ivl}`
-    console.log(`[UpstoxAPI] V3 Intraday: GET ${path}`)
+    let ivl = '30minute'
+    if (['1minute', '1', '1m'].includes(interval)) ivl = '1minute'
+    else if (['30minute', '30', '30m'].includes(interval)) ivl = '30minute'
+
+    const path = `/v2/historical-candle/intraday/${encodeURIComponent(instrumentKey)}/${ivl}`
     const response = await upstoxFetch(path, token)
 
     const candles = response?.data?.candles || []
-    console.log(`\u2713 V3 Intraday: ${candles.length} candles for ${instrumentKey} (${unit}/${ivl})`)
+    console.log(`✓ Fetched ${candles.length} intraday candles for ${instrumentKey}`)
     return candles
   } catch (err) {
-    console.error(`\u2717 V3 Intraday candles failed for ${instrumentKey}:`, err.message)
+    console.error(`✗ Intraday candles fetch failed for ${instrumentKey}:`, err.message)
     throw err
   }
-}
-
-/**
- * Resolve a resolution string into V3 intraday unit + interval
- * Supports: '1','3','5','15','30','60','1H','2H','D','day','1D'
- */
-function resolveIntradayInterval(resolution) {
-  const r = String(resolution).toUpperCase().trim()
-  if (r === '60' || r === '1H')  return { unit: 'hours',   ivl: '1' }
-  if (r === '120' || r === '2H') return { unit: 'hours',   ivl: '2' }
-  if (r === '180' || r === '3H') return { unit: 'hours',   ivl: '3' }
-  if (r === '240' || r === '4H') return { unit: 'hours',   ivl: '4' }
-  if (r === 'D' || r === '1D' || r === 'DAY') return { unit: 'days', ivl: '1' }
-  const num = parseInt(r, 10)
-  if (!isNaN(num) && num >= 1 && num <= 300) return { unit: 'minutes', ivl: String(num) }
-  return { unit: 'minutes', ivl: '5' }
 }
 
 /**
@@ -170,47 +149,32 @@ function resolveIntradayInterval(resolution) {
  * @param {string} token - Optional token override
  * @returns {array} Array of candles
  */
-/**
- * V3 Historical Candle API
- * URL: GET /v3/historical-candle/{instrument_key}/{unit}/{interval}/{to_date}/{from_date}
- * unit: 'minutes' | 'hours' | 'days' | 'weeks' | 'months'
- */
-export async function getHistoricalCandles(instrumentKey, interval = 'day', toDate, fromDate, token) {
+export async function getHistoricalCandles(instrumentKey, interval = '30minute', toDate, fromDate, token) {
   if (!instrumentKey || !toDate) {
     throw new Error('instrumentKey and toDate are required')
   }
 
   try {
-    const { unit, ivl } = resolveHistoricalInterval(interval)
-    const encodedKey = encodeURIComponent(instrumentKey)
-    let path = `/v3/historical-candle/${encodedKey}/${unit}/${ivl}/${encodeURIComponent(toDate)}`
-    if (fromDate) path += `/${encodeURIComponent(fromDate)}`
+    let ivl = '30minute'
+    if (['1minute', '1', '1m'].includes(interval)) ivl = '1minute'
+    else if (['day', 'D', '1D'].includes(interval)) ivl = 'day'
+    else if (['week', 'W', '1W'].includes(interval)) ivl = 'week'
+    else if (['month', 'M', '1M'].includes(interval)) ivl = 'month'
 
-    console.log(`[UpstoxAPI] V3 Historical: GET ${path}`)
+    let path = `/v2/historical-candle/${encodeURIComponent(instrumentKey)}/${ivl}/${encodeURIComponent(toDate)}`
+    if (fromDate) {
+      path += `/${encodeURIComponent(fromDate)}`
+    }
+
     const response = await upstoxFetch(path, token)
 
     const candles = response?.data?.candles || []
-    console.log(`\u2713 V3 Historical: ${candles.length} candles for ${instrumentKey} (${unit}/${ivl})`)
+    console.log(`✓ Fetched ${candles.length} historical candles for ${instrumentKey}`)
     return candles
   } catch (err) {
-    console.error(`\u2717 V3 Historical candles failed:`, err.message)
+    console.error(`✗ Historical candles fetch failed:`, err.message)
     throw err
   }
-}
-
-/**
- * Resolve a resolution string into V3 historical unit + interval
- */
-function resolveHistoricalInterval(resolution) {
-  const r = String(resolution).toUpperCase().trim()
-  if (r === 'D' || r === 'DAY' || r === '1D') return { unit: 'days',   ivl: '1' }
-  if (r === 'W' || r === 'WEEK')              return { unit: 'weeks',  ivl: '1' }
-  if (r === 'M' || r === 'MONTH')             return { unit: 'months', ivl: '1' }
-  if (r === '60' || r === '1H')               return { unit: 'hours',  ivl: '1' }
-  if (r === '120' || r === '2H')              return { unit: 'hours',  ivl: '2' }
-  const num = parseInt(r, 10)
-  if (!isNaN(num) && num >= 1 && num <= 300)  return { unit: 'minutes', ivl: String(num) }
-  return { unit: 'days', ivl: '1' }
 }
 
 /**
@@ -294,24 +258,18 @@ export async function searchInstruments(query, options = {}, token) {
 
   try {
     const params = new URLSearchParams()
-    params.append('query', query)
+    params.append('search_string', query)
     
-    if (options.exchanges) params.append('exchanges', options.exchanges)
-    if (options.segments) params.append('segments', options.segments)
-    if (options.instrumentTypes) params.append('instrument_types', options.instrumentTypes)
+    if (options.exchanges) params.append('exchange', options.exchanges)
+    if (options.segments) params.append('segment', options.segments)
+    if (options.instrumentTypes) params.append('instrument_type', options.instrumentTypes)
     if (options.pageNumber) params.append('page_number', options.pageNumber)
     if (options.records) params.append('records', options.records)
-    if (options.expiry) params.append('expiry', options.expiry)
-    if (options.atmOffset !== undefined) params.append('atm_offset', options.atmOffset)
 
-    const path = `/v2/instruments/search?${params.toString()}`
+    const path = `/v3/search/instruments?${params.toString()}`
     const response = await upstoxFetch(path, token)
     
-    let results = response?.data || []
-    if (results && !Array.isArray(results)) {
-      results = Array.isArray(results.instruments) ? results.instruments : []
-    }
-
+    const results = response?.data || []
     console.log(`✓ Search found ${results.length} instruments matching "${query}"`)
     return results
   } catch (err) {
@@ -332,44 +290,6 @@ export async function getProfile(token) {
     return response?.data
   } catch (err) {
     console.error(`✗ Profile fetch failed:`, err.message)
-    throw err
-  }
-}
-
-/**
- * Get news for instruments, positions, or holdings
- * @param {object} options - { category, instrument_keys, page_number, page_size }
- * @param {string} token - Optional token override
- * @returns {object} News data
- */
-export async function getNews(options = {}, token) {
-  try {
-    const { category = 'instrument_keys', instrument_keys, page_number = 1, page_size = 20 } = options
-    
-    if (!category) throw new Error('category is required')
-
-    const tokenToUse = token || currentAccessToken || CONFIG.accessToken
-    if (!tokenToUse) {
-      console.warn(`[UpstoxAPI News] No token provided - using fallback`)
-    }
-    
-    const params = new URLSearchParams({
-      category,
-      page_number,
-      page_size,
-    })
-    
-    if (instrument_keys) {
-      params.set('instrument_keys', instrument_keys)
-    }
-
-    console.log(`[UpstoxAPI News] Fetching with token length: ${tokenToUse?.length || 0}, Category: ${category}`)
-    
-    const response = await upstoxFetch(`/v2/news?${params.toString()}`, tokenToUse)
-    console.log(`✓ Fetched news (${category})`)
-    return response
-  } catch (err) {
-    console.error(`✗ News fetch failed:`, err.message)
     throw err
   }
 }
@@ -481,7 +401,7 @@ export function getAuthorizationUrl(redirectUri, state) {
 }
 
 /**
- * Get API configuration status
+ * Get SDK configuration status
  * @returns {object} Configuration and validation info
  */
 export function getConfigStatus() {

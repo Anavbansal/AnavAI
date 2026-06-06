@@ -23,51 +23,24 @@ const TABS = [
   { id: 'mf', label: '🏦 Mutual Funds' },
 ]
 
-// Map tab id to API mode
-const TAB_MODE = {
-  overview: 'tech',
-  intraday: 'intraday',
-  delivery: 'delivery',
-  fogreeks: 'fo',
-  portfolio: 'tech',
-  mf: 'tech',
-}
-
 export default function Dashboard() {
   const [tab, setTab] = useState('overview')
   const { data, ai, loading, error, analyze } = useAnalysis()
   const [symbol, setSymbol] = useState('NIFTY')
-  const [currentTf, setCurrentTf] = useState('5')
-  const [currentSym, setCurrentSym] = useState('NIFTY')
 
   useEffect(() => {
-    analyze('NIFTY', '5', 'tech')
+    analyze('NIFTY', '5')
   }, [])
-
-  // Re-fetch with correct mode when tab changes (if we already have a symbol)
-  function handleTabChange(newTab) {
-    setTab(newTab)
-    const mode = TAB_MODE[newTab] || 'tech'
-    // Don't re-fetch for portfolio/mf tabs
-    if (['portfolio', 'mf'].includes(newTab)) return
-    const tf = newTab === 'delivery' ? 'D' : currentTf
-    analyze(currentSym, tf, mode)
-  }
 
   function handleAnalyze(sym, tf) {
     const displaySymbol = typeof sym === 'string' ? sym : (sym?.symbol || 'NIFTY')
     setSymbol(displaySymbol)
-    setCurrentSym(sym)
-    setCurrentTf(tf)
-    const mode = TAB_MODE[tab] || 'tech'
-    const resolvedTf = tab === 'delivery' ? 'D' : tf
-    analyze(sym, resolvedTf, mode)
+    analyze(sym, tf)
   }
 
   function handleSelectSymbol(sym) {
     setSymbol(sym)
-    setCurrentSym(sym)
-    analyze(sym, '5', 'tech')
+    analyze(sym, '5')
     setTab('overview')
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -83,7 +56,7 @@ export default function Dashboard() {
         {/* Tabs */}
         <div className="flex gap-1 flex-wrap">
           {TABS.map(t => (
-            <button key={t.id} onClick={() => handleTabChange(t.id)}
+            <button key={t.id} onClick={() => setTab(t.id)}
               className={`font-mono border px-3 py-1.5 transition-all text-xs ${tab === t.id ? 'border-accent text-accent bg-accent/10' : 'border-border text-muted hover:border-accent/50 hover:text-accent/70'}`}>
               {t.label}
             </button>
@@ -117,7 +90,7 @@ export default function Dashboard() {
             </div>
             {/* Middle row: AI insights + News */}
             <div className="grid grid-cols-2 gap-3">
-              <AIInsights ai={ai} loading={loading} />
+              <AIInsights ai={ai} data={data} loading={loading} />
               <NewsPanel symbol={symbol} news={data?.latestNews} />
             </div>
             {/* Bottom row: Company Fundamentals */}
@@ -133,7 +106,7 @@ export default function Dashboard() {
             <Intraday data={data} ai={ai} />
             <div className="flex flex-col gap-3">
               <CandleChart data={data} ai={ai} />
-              <AIInsights ai={ai} loading={loading} />
+              <AIInsights ai={ai} data={data} loading={loading} />
             </div>
           </div>
         )}
@@ -154,7 +127,7 @@ export default function Dashboard() {
           <div className="flex flex-col gap-3">
             <FOGreeks data={data} />
             <div className="grid grid-cols-2 gap-3">
-              <AIInsights ai={ai} loading={loading} />
+              <AIInsights ai={ai} data={data} loading={loading} />
               <PricePanel data={data} ai={ai} />
             </div>
           </div>

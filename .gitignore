@@ -1,7 +1,30 @@
-node_modules
-dist
-dist-lambda
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Secrets — NEVER commit
 .env
 .env.local
-.env.production
-upstox-lambda.zip
+.env.*.local
+
+# Build output
+dist/
+build/
+
+# Logs
+*.log
+.codex-temp/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Lock files (keep package-lock for reproducibility)
+# package-lock.json

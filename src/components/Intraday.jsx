@@ -1,209 +1,275 @@
-import React, { useMemo } from 'react'
+import React, { useState } from 'react'
 import { fmt } from '../utils/indicators'
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
 
-const C = {
-  bull:'#00e87a', bear:'#ff2d55', accent:'#00cfff', vwap:'#ffd700',
-  ema20:'#00cfff', border:'#162030', bg:'#050d17', panel:'#091522',
-  text:'#7aa8c8', dim:'#2a4a6a', white:'#cce0f5',
-}
+const IST_WINDOWS = [
+  { label: '9:15 – 10:30', desc: 'Opening range — high volatility, best momentum trades', color: '#00ff88' },
+  { label: '10:30 – 12:00', desc: 'Mid-morning — trend confirmation phase', color: '#ffd700' },
+  { label: '12:00 – 2:00', desc: 'Lunch lull — avoid, whipsaw likely', color: '#ff3366' },
+  { label: '2:00 – 3:30', desc: 'Power hour — strong directional moves, best breakouts', color: '#00ff88' },
+]
 
-function Pill({ val, pass, size='sm' }) {
-  const color = pass ? C.bull : C.bear
-  return (
-    <span style={{
-      fontFamily:'Rajdhani,sans-serif', fontWeight:700, fontSize:size==='lg'?13:10,
-      padding: size==='lg'?'3px 10px':'2px 7px',
-      border:`1px solid ${color}55`, borderRadius:3,
-      color, background:`${color}11`,
-      letterSpacing:1,
-    }}>{val}</span>
-  )
-}
-
-function MeterBar({ val, min=0, max=100, color, height=4 }) {
-  const pct = Math.max(0, Math.min(100, ((val-min)/(max-min||1))*100))
-  return (
-    <div style={{height, background:'#0d1825', borderRadius:2, overflow:'hidden', marginTop:3}}>
-      <div style={{height:'100%', width:`${pct}%`, background:`linear-gradient(90deg,${color}88,${color})`, borderRadius:2, transition:'width .5s ease'}}/>
-    </div>
-  )
+function getISTWindow() {
+  const now = new Date()
+  const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
+  const h = ist.getHours(), m = ist.getMinutes()
+  const mins = h * 60 + m
+  if (mins >= 555 && mins < 630) return 0   // 9:15–10:30
+  if (mins >= 630 && mins < 720) return 1   // 10:30–12:00
+  if (mins >= 720 && mins < 840) return 2   // 12:00–14:00
+  if (mins >= 840 && mins < 930) return 3   // 14:00–15:30
+  return -1
 }
 
 export default function Intraday({ data, ai }) {
-  const miniData = useMemo(()=>{
-    if (!data?.candles?.length) return []
-    return data.candles.slice(-80).map(c=>({
-      t: new Date(c.timestamp).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}),
-      price: c.close, vwap: data.vwap,
-    }))
-  },[data])
+  const [showBreakdown, setShowBreakdown] = useState(false)
 
   if (!data || !ai) return (
-    <div style={{background:C.bg, border:`1px solid ${C.border}`, borderRadius:8,
-      display:'flex', alignItems:'center', justifyContent:'center', height:320, flexDirection:'column', gap:12}}>
-      <div style={{fontSize:44, opacity:0.15}}>⚡</div>
-      <div style={{fontFamily:'Share Tech Mono', color:C.dim, fontSize:11, letterSpacing:4}}>INTRADAY · RUN ANALYSIS</div>
+    <div className="panel flex items-center justify-center py-10 text-center gap-3">
+      <div style={{ fontSize: 32, opacity: 0.3 }}>⚡</div>
+      <div>
+        <div className="font-display text-muted text-xs tracking-widest">INTRADAY IDLE</div>
+        <div className="font-mono text-dim mt-1" style={{ fontSize: 11 }}>Run analysis to see intraday signals</div>
+      </div>
     </div>
   )
 
-  const bull  = ai.verdict==='BUY'
-  const bear  = ai.verdict==='SELL'
-  const vclr  = bull ? C.bull : bear ? C.bear : '#ffd700'
-  const stBull = data.supertrend?.direction==='up'
-  const bbPct  = data.bb ? Math.max(0,Math.min(100,((data.price-data.bb.lower)/Math.max(data.bb.upper-data.bb.lower,1))*100)) : 50
+  const bull = ai.verdict === 'BUY', bear = ai.verdict === 'SELL'
+  const accentColor = bull ? '#00ff88' : bear ? '#ff3366' : '#ffd700'
 
+  // Core signals
   const signals = [
-    { label:'Price vs VWAP',      pass: data.price>data.vwap,            weight:'HIGH',
-      val:  `${data.price>data.vwap?'+':''}${((data.price-data.vwap)/data.vwap*100).toFixed(2)}%`,
-      detail:`₹${fmt(data.price)} vs ₹${fmt(data.vwap)}` },
-    { label:'Price vs EMA20',     pass: data.price>data.ema20,           weight:'HIGH',
-      val:  data.price>data.ema20?'▲ ABOVE':'▼ BELOW',
-      detail:`EMA20 ₹${fmt(data.ema20)} | EMA50 ₹${fmt(data.ema50)}` },
-    { label:'Supertrend',         pass: stBull,                          weight:'HIGH',
-      val:  stBull?'▲ BULLISH':'▼ BEARISH',
-      detail:`ST @ ₹${fmt(data.supertrend?.value||0)}` },
-    { label:'MACD Histogram',     pass: data.macd?.histogram>0,          weight:'HIGH',
-      val:  data.macd?.histogram>0?`+${data.macd.histogram.toFixed(3)}`:data.macd?.histogram?.toFixed(3)||'0',
-      detail:`MACD ${data.macd?.macd?.toFixed(3)} | Sig ${data.macd?.signal?.toFixed(3)}` },
-    { label:'ADX Trend Strength', pass: (data.adx?.adx||0)>20,           weight:'HIGH',
-      val:  `ADX ${data.adx?.adx||'N/A'}`,
-      detail:`+DI ${data.adx?.plusDI||'–'} | -DI ${data.adx?.minusDI||'–'} | ${(data.adx?.adx||0)>30?'STRONG TREND':(data.adx?.adx||0)>20?'TREND':'NO TREND'}` },
-    { label:'RSI Zone',           pass: data.rsi>45&&data.rsi<72,        weight:'MED',
-      val:  `RSI ${data.rsi?.toFixed(1)}`,
-      detail: data.rsi>70?'Overbought':data.rsi<30?'Oversold':data.rsi>50?'Bullish zone':'Bearish zone' },
-    { label:'StochRSI',           pass: (data.stochRSI||50)<80&&(data.stochRSI||50)>15, weight:'MED',
-      val:  `S-RSI ${data.stochRSI||'N/A'}`,
-      detail: (data.stochRSI||50)>80?'Overbought':(data.stochRSI||50)<20?'Oversold — buy zone':'Neutral' },
-    { label:'OBV Trend',          pass: data.obvTrend==='RISING',        weight:'MED',
-      val:  data.obvTrend||'N/A',
-      detail:'On-Balance Volume — confirms price move with volume' },
-    { label:'Volume Confirmation', pass: (data.volumeRatio||0)>1,        weight:'MED',
-      val:  `${(data.volumeRatio||1).toFixed(2)}x avg`,
-      detail: (data.volumeRatio||1)>1.5?'Strong — high conviction':(data.volumeRatio||1)>1?'Above avg':'Below avg — weak signal' },
-    { label:'Multi-TF Alignment', pass: data.trendConsistency==='CONFIRMED', weight:'HIGH',
-      val:  data.trendConsistency,
-      detail:`M1:${data.m1Trend} | M5:${data.m5Trend} | M15:${data.m15Trend}` },
-    { label:'PCR / OI Bias',      pass: (data.pcr||1)>0.9,              weight:'MED',
-      val:  data.pcr>1.2?'▲ BULLISH':data.pcr<0.8?'▼ BEARISH':'→ NEUTRAL',
-      detail:`PCR ${(data.pcr||1).toFixed(2)} — ${data.pcr>1.2?'Puts dominant (bullish)':data.pcr<0.8?'Calls dominant (bearish)':'Balanced'}` },
+    { label: 'VWAP Signal',  val: data.price > data.vwap ? `▲ ABOVE VWAP ₹${fmt(data.vwap)}` : `▼ BELOW VWAP ₹${fmt(data.vwap)}`, pass: data.price > data.vwap, weight: 'HIGH' },
+    { label: 'EMA20 Signal', val: data.price > data.ema20 ? `▲ ABOVE EMA20 ₹${fmt(data.ema20)}` : `▼ BELOW EMA20 ₹${fmt(data.ema20)}`, pass: data.price > data.ema20, weight: 'HIGH' },
+    { label: 'RSI Momentum', val: `RSI ${(data.rsi||50).toFixed(1)} — ${data.rsi>70?'OB':data.rsi<30?'OS':data.rsi>50?'Bullish':'Bearish'}`, pass: data.rsi > 50 && data.rsi < 72, weight: 'MED' },
+    { label: 'MACD Hist',    val: data.macd?.histogram > 0 ? `▲ +${data.macd.histogram.toFixed(4)}` : `▼ ${data.macd?.histogram?.toFixed(4)||'0'}`, pass: data.macd?.histogram > 0, weight: 'MED' },
+    { label: 'Supertrend',   val: data.supertrend?.direction === 'up' ? `▲ BULL ₹${fmt(data.supertrend.value)}` : `▼ BEAR ₹${fmt(data.supertrend?.value||0)}`, pass: data.supertrend?.direction === 'up', weight: 'HIGH' },
+    { label: 'Volume Conf',  val: `${(data.volumeRatio||1).toFixed(2)}x avg — ${data.volumeRatio>1.2?'Strong':data.volumeRatio>0.8?'Normal':'Weak'}`, pass: data.volumeRatio > 1.0, weight: 'MED' },
+    { label: 'MTF Align',    val: data.trendConsistency === 'CONFIRMED' ? `✓ ALL ALIGNED ${data.m1Trend}` : `✗ DIVERGENT`, pass: data.trendConsistency === 'CONFIRMED', weight: 'HIGH' },
+    { label: 'ADX Trend',    val: data.adx ? `ADX ${data.adx.adx} — ${data.adx.trend}` : 'N/A', pass: data.adx?.adx >= 20 && (data.adx?.pdi > data.adx?.mdi) === bull, weight: 'MED' },
   ]
+  const passed = signals.filter(s => s.pass).length
+  const signalScore = Math.round((passed / signals.length) * 100)
 
-  const highSignals  = signals.filter(s=>s.weight==='HIGH')
-  const highPass     = highSignals.filter(s=>s.pass).length
-  const totalPass    = signals.filter(s=>s.pass).length
-  const score        = Math.round((totalPass/signals.length)*100)
-  const highScore    = Math.round((highPass/highSignals.length)*100)
+  // Pivot points
+  const pp = data.pivotPoints?.standard
+  const cam = data.pivotPoints?.camarilla
+
+  // Candle patterns
+  const patterns = data.candlePatterns || []
+  const bullPat = patterns.filter(p => p.type === 'BULLISH')
+  const bearPat = patterns.filter(p => p.type === 'BEARISH')
+
+  // Score breakdown from AI
+  const breakdown = ai.breakdown || []
+
+  const currentWindow = getISTWindow()
+
+  const riskProfile = data.riskProfile
+  const riskColors = { LOW:'#00ff88', MODERATE:'#ffd700', HIGH:'#ff6b35', 'VERY HIGH':'#ff3366' }
+  const riskColor = riskColors[riskProfile?.profile] || '#6a9ab8'
 
   return (
-    <div style={{background:C.bg, border:`1px solid ${C.border}`, borderRadius:8, overflow:'hidden', display:'flex', flexDirection:'column'}}>
-      {/* Header */}
-      <div style={{padding:'9px 14px', borderBottom:`1px solid ${C.border}`, background:C.panel, display:'flex', alignItems:'center', gap:10}}>
-        <span style={{fontFamily:'Share Tech Mono', color:C.accent, fontSize:11, fontWeight:'bold', letterSpacing:2}}>⚡ INTRADAY SIGNAL BOARD</span>
-        <div style={{marginLeft:'auto', display:'flex', gap:10, alignItems:'center'}}>
-          <span style={{fontFamily:'Share Tech Mono', fontSize:10, color:C.dim}}>HIGH {highPass}/{highSignals.length}</span>
-          <span style={{fontFamily:'Share Tech Mono', fontSize:10, color: score>=65?C.bull:score<=40?C.bear:'#ffd700'}}>SCORE {score}/100</span>
+    <div className="panel animate-fadein">
+      <div className="panel-header">
+        <div className="panel-title">⚡ Intraday Signal Board</div>
+        <div className="ml-auto flex items-center gap-2">
+          <span className="font-mono" style={{ fontSize: 10, color: accentColor }}>Score: {signalScore}/100</span>
+          <button onClick={() => setShowBreakdown(s=>!s)}
+            className="font-mono border border-border text-muted px-2 py-0.5 hover:border-accent hover:text-accent transition-colors"
+            style={{ fontSize: 9 }}>
+            {showBreakdown ? 'LESS' : 'BREAKDOWN'}
+          </button>
         </div>
       </div>
 
-      {/* Verdict banner */}
-      <div style={{
-        padding:'10px 14px', borderBottom:`2px solid ${vclr}33`,
-        background:`linear-gradient(135deg,${vclr}0d,transparent 70%)`,
-        display:'grid', gridTemplateColumns:'auto 1fr auto', gap:14, alignItems:'center',
-      }}>
-        <div style={{
-          fontFamily:'Rajdhani,sans-serif', fontWeight:900, fontSize:32, color:vclr, letterSpacing:5,
-          textShadow:`0 0 24px ${vclr}55, 0 0 60px ${vclr}22`,
-        }}>{ai.verdict}</div>
-        <div>
-          <div style={{fontFamily:'Share Tech Mono', color:C.text, fontSize:11}}>
-            Entry ₹{fmt(ai.entry??0)} · Target ₹{fmt(ai.target??0)} · SL ₹{fmt(ai.stopLoss??0)}
+      <div className="p-3 grid grid-cols-1 gap-2">
+        {/* Main verdict */}
+        <div className="p-3 border text-center" style={{ borderColor: accentColor, background: `${accentColor}08` }}>
+          <div className="font-display font-black" style={{ fontSize: 22, color: accentColor, letterSpacing: 3 }}>
+            {ai.verdict}
           </div>
-          <div style={{fontFamily:'Share Tech Mono', color:C.dim, fontSize:10, marginTop:3}}>
-            R:R {(ai.riskReward??0).toFixed(1)}:1 · Conf {ai.confidence}% · {(data.regime||'').replace('_',' ')}
+          <div className="font-mono text-muted mt-1" style={{ fontSize: 11 }}>
+            Entry: ₹{fmt(ai.entry ?? 0)} · Target: ₹{fmt(ai.target ?? 0)} · SL: ₹{fmt(ai.stopLoss ?? 0)}
+          </div>
+          <div className="font-mono text-dim mt-0.5" style={{ fontSize: 11 }}>
+            RR: {(ai.riskReward ?? 0).toFixed(2)}:1 · Confidence: <span style={{color:accentColor}}>{ai.confidence}%</span>
+            {ai.bullVotes != null && <span className="text-dim"> · {ai.bullVotes}↑/{ai.bearVotes}↓</span>}
           </div>
         </div>
-        <div style={{textAlign:'center'}}>
-          <div style={{fontFamily:'Share Tech Mono', color:C.dim, fontSize:9, letterSpacing:1}}>CONF</div>
-          <div style={{fontFamily:'Rajdhani,sans-serif', fontWeight:700, color:vclr, fontSize:24}}>{ai.confidence}%</div>
-          <MeterBar val={ai.confidence} color={vclr} height={3}/>
-        </div>
-      </div>
 
-      {/* Mini chart */}
-      {miniData.length>0 && (
-        <div style={{height:80, borderBottom:`1px solid ${C.border}`}}>
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={miniData} margin={{top:4,right:4,bottom:0,left:0}}>
-              <defs>
-                <linearGradient id="intGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={vclr} stopOpacity={0.35}/>
-                  <stop offset="100%" stopColor={vclr} stopOpacity={0}/>
-                </linearGradient>
-              </defs>
-              <Area type="monotone" dataKey="price" stroke={vclr} fill="url(#intGrad)" strokeWidth={1.6} dot={false}/>
-              <Area type="monotone" dataKey="vwap" stroke={C.vwap} fill="none" strokeWidth={1} strokeDasharray="4 3" dot={false}/>
-              <XAxis dataKey="t" hide/>
-              <YAxis hide domain={['auto','auto']}/>
-              <Tooltip formatter={v=>[`₹${fmt(v)}`,'Price']} contentStyle={{background:C.bg,border:`1px solid ${C.border}`,fontFamily:'Share Tech Mono',fontSize:10}}/>
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      )}
-
-      {/* 4-cell indicator grid */}
-      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:1, background:C.border, borderBottom:`1px solid ${C.border}`}}>
-        {[
-          {n:'RSI(14)',   v:(data.rsi||50).toFixed(1), c:data.rsi>70?C.bear:data.rsi<30?C.bull:'#ffd700', sub:data.rsi>70?'OVERBOUGHT':data.rsi<30?'OVERSOLD':'NEUTRAL', pct:data.rsi, mn:0, mx:100},
-          {n:'STOCH RSI', v:(data.stochRSI||50).toFixed(1), c:(data.stochRSI||50)>80?C.bear:(data.stochRSI||50)<20?C.bull:C.text, sub:(data.stochRSI||50)>80?'OB ZONE':(data.stochRSI||50)<20?'OS ZONE':'MID', pct:data.stochRSI||50, mn:0, mx:100},
-          {n:'ADX',       v:(data.adx?.adx||0).toFixed(1), c:(data.adx?.adx||0)>30?C.bull:(data.adx?.adx||0)>20?'#ffd700':C.bear, sub:(data.adx?.adx||0)>30?'STRONG TREND':(data.adx?.adx||0)>20?'TRENDING':'WEAK', pct:data.adx?.adx||0, mn:0, mx:60},
-          {n:'VOL RATIO', v:`${(data.volumeRatio||1).toFixed(2)}x`, c:(data.volumeRatio||1)>1.5?C.bull:(data.volumeRatio||1)<0.7?C.bear:'#ffd700', sub:(data.volumeRatio||1)>1.5?'HIGH VOL':(data.volumeRatio||1)<0.7?'LOW VOL':'NORMAL', pct:data.volumeRatio||1, mn:0, mx:3},
-        ].map(m=>(
-          <div key={m.n} style={{background:C.bg, padding:'8px 10px'}}>
-            <div style={{fontFamily:'Share Tech Mono', color:C.dim, fontSize:9, letterSpacing:1}}>{m.n}</div>
-            <div style={{fontFamily:'Rajdhani,sans-serif', fontWeight:700, color:m.c, fontSize:16, marginTop:1}}>{m.v}</div>
-            <MeterBar val={m.pct} min={m.mn} max={m.mx} color={m.c}/>
-            <div style={{fontFamily:'Share Tech Mono', color:m.c, fontSize:8, marginTop:2, letterSpacing:1}}>{m.sub}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Signal checklist */}
-      <div style={{padding:'0 14px 10px', overflowY:'auto', maxHeight:340}}>
-        <div style={{fontFamily:'Share Tech Mono', color:C.accent, fontSize:9, letterSpacing:2, padding:'8px 0 6px', borderBottom:`1px solid ${C.border}33`}}>
-          SIGNAL CHECKLIST — {totalPass}/{signals.length} PASSING
-        </div>
-        {signals.map((s,i)=>(
-          <div key={i} style={{
-            display:'grid', gridTemplateColumns:'18px 1fr auto', alignItems:'start',
-            gap:8, padding:'7px 0', borderBottom:`1px solid ${C.border}33`,
-          }}>
-            <span style={{color:s.pass?C.bull:C.bear, fontSize:14, lineHeight:1.4}}>{s.pass?'✓':'✗'}</span>
-            <div>
-              <div style={{display:'flex',alignItems:'center',gap:6}}>
-                <span style={{fontFamily:'Share Tech Mono', color:C.white, fontSize:11}}>{s.label}</span>
-                <span style={{fontFamily:'Share Tech Mono', fontSize:8, padding:'1px 5px',
-                  border:`1px solid ${s.weight==='HIGH'?'#ffd70033':'#2a4a6a'}`,
-                  color:s.weight==='HIGH'?'#ffd700':C.dim, borderRadius:2}}>{s.weight}</span>
-              </div>
-              <div style={{fontFamily:'Share Tech Mono', color:C.dim, fontSize:10, marginTop:2}}>{s.detail}</div>
+        {/* ADX Trend Strength Bar */}
+        {data.adx && (
+          <div className="p-2 border border-border/50">
+            <div className="flex justify-between items-center mb-1">
+              <span className="font-mono text-dim uppercase" style={{fontSize:10}}>Trend Strength (ADX)</span>
+              <span className="font-mono" style={{fontSize:11, color: data.adx.adx>=40?'#00ff88':data.adx.adx>=25?'#ffd700':'#6a9ab8'}}>
+                {data.adx.adx} — {data.adx.trend}
+              </span>
             </div>
-            <Pill val={s.val} pass={s.pass}/>
+            <div className="h-1.5 rounded overflow-hidden" style={{background:'#1a3050'}}>
+              <div className="h-full rounded transition-all"
+                style={{width:`${Math.min(100, data.adx.adx)}%`,
+                  background: data.adx.adx>=40?'#00ff88':data.adx.adx>=25?'#ffd700':'#6a9ab8'}}/>
+            </div>
+            <div className="flex justify-between font-mono text-dim mt-1" style={{fontSize:10}}>
+              <span>PDI {data.adx.pdi} ↑</span>
+              <span>MDI {data.adx.mdi} ↓</span>
+            </div>
+          </div>
+        )}
+
+        {/* Risk Profile + Investment Action */}
+        {riskProfile && (
+          <div className="flex gap-2">
+            <div className="flex-1 p-2 border border-border/50">
+              <div className="font-mono text-dim uppercase tracking-widest" style={{fontSize:9}}>Risk Profile</div>
+              <div className="font-display font-bold mt-0.5" style={{fontSize:13, color:riskColor}}>
+                {riskProfile.profile}
+              </div>
+              <div className="font-mono text-dim mt-0.5" style={{fontSize:10}}>
+                ATR {riskProfile.atrPct?.toFixed(2)}% of CMP
+              </div>
+            </div>
+            {data.investmentGuidance && (
+              <div className="flex-1 p-2 border border-border/50">
+                <div className="font-mono text-dim uppercase tracking-widest" style={{fontSize:9}}>Position Size</div>
+                <div className="font-display font-bold mt-0.5" style={{fontSize:13, color:accentColor}}>
+                  {data.investmentGuidance.positionSize}
+                </div>
+                <div className="font-mono text-dim mt-0.5" style={{fontSize:10}}>
+                  {data.investmentGuidance.capitalPct}% of capital
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Candle Patterns */}
+        {patterns.length > 0 && (
+          <div className="p-2 border border-border/50">
+            <div className="font-mono text-accent uppercase tracking-widest mb-1.5" style={{fontSize:10}}>
+              Candlestick Patterns Detected
+            </div>
+            {patterns.slice(0,3).map((pat, i) => (
+              <div key={i} className="flex items-center gap-2 py-1 border-b border-border/30 last:border-0">
+                <span style={{fontSize:12, color: pat.type==='BULLISH'?'#00ff88':pat.type==='BEARISH'?'#ff3366':'#ffd700'}}>
+                  {pat.type==='BULLISH'?'▲':pat.type==='BEARISH'?'▼':'◆'}
+                </span>
+                <div className="flex-1">
+                  <div className="font-display" style={{fontSize:11, color: pat.type==='BULLISH'?'#00ff88':pat.type==='BEARISH'?'#ff3366':'#ffd700'}}>
+                    {pat.name}
+                    <span className="font-mono text-dim ml-2" style={{fontSize:9}}>{pat.confidence}% conf</span>
+                  </div>
+                  <div className="font-mono text-dim" style={{fontSize:10}}>{pat.description}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Signal Checklist */}
+        <div className="font-mono text-accent uppercase tracking-widest mb-1" style={{ fontSize: 10 }}>Signal Checklist</div>
+        {signals.map((s, i) => (
+          <div key={i} className="flex items-center gap-3 py-1.5 border-b border-border/30 last:border-0">
+            <span style={{ color: s.pass ? '#00ff88' : '#ff3366', fontSize: 13 }}>{s.pass ? '✓' : '✗'}</span>
+            <span className="font-mono text-muted flex-1" style={{ fontSize: 11 }}>{s.label}</span>
+            <span className="font-mono" style={{ fontSize: 10, color: s.pass ? '#00ff88' : '#ff3366' }}>{s.val}</span>
+            <span className="font-mono border px-1" style={{ fontSize: 9, color: '#3a5a7a', borderColor: '#1a3050' }}>{s.weight}</span>
           </div>
         ))}
-      </div>
 
-      {/* BB position bar */}
-      <div style={{padding:'8px 14px', borderTop:`1px solid ${C.border}`}}>
-        <div style={{display:'flex', justifyContent:'space-between', marginBottom:5}}>
-          <span style={{fontFamily:'Share Tech Mono', color:C.dim, fontSize:9}}>BB LOWER ₹{fmt(data.bb?.lower??0)}</span>
-          <span style={{fontFamily:'Share Tech Mono', color:C.text, fontSize:9}}>BOLLINGER BAND POSITION ({bbPct.toFixed(0)}%)</span>
-          <span style={{fontFamily:'Share Tech Mono', color:C.dim, fontSize:9}}>BB UPPER ₹{fmt(data.bb?.upper??0)}</span>
-        </div>
-        <div style={{height:6, background:'#0d1825', borderRadius:3, position:'relative', overflow:'hidden'}}>
-          <div style={{position:'absolute', top:0, bottom:0, left:0, right:0, background:'linear-gradient(90deg,#ff2d5522,#ffd70022,#00e87a22)'}}/>
-          <div style={{position:'absolute', top:'50%', transform:'translateY(-50%)', left:`calc(${bbPct}% - 4px)`, width:8, height:8, borderRadius:'50%', background:vclr, boxShadow:`0 0 8px ${vclr}`}}/>
+        {/* AI Score Breakdown */}
+        {showBreakdown && breakdown.length > 0 && (
+          <div className="mt-1 border border-border/50">
+            <div className="font-mono text-accent uppercase tracking-widest px-2 py-1.5 border-b border-border/50"
+              style={{fontSize:10}}>
+              Score Breakdown ({ai.bullVotes}↑ Bull / {ai.bearVotes}↓ Bear)
+            </div>
+            {breakdown.map((f, i) => (
+              <div key={i} className="flex items-center gap-2 px-2 py-1.5 border-b border-border/20 last:border-0"
+                style={{background: i%2===0?'rgba(0,0,0,0.1)':'transparent'}}>
+                <span style={{fontSize:11, color: f.vote==='BULL'?'#00ff88':f.vote==='BEAR'?'#ff3366':'#6a9ab8',
+                  width:14, flexShrink:0}}>
+                  {f.vote==='BULL'?'↑':f.vote==='BEAR'?'↓':'→'}
+                </span>
+                <span className="font-mono font-bold text-muted" style={{fontSize:10, width:90, flexShrink:0}}>
+                  {f.name}
+                </span>
+                <span className="font-mono text-dim flex-1" style={{fontSize:10}}>{f.reason}</span>
+                <span className="font-mono border px-1 flex-shrink-0"
+                  style={{fontSize:9, color: f.vote==='BULL'?'#00ff88':f.vote==='BEAR'?'#ff3366':'#6a9ab8',
+                    borderColor: f.vote==='BULL'?'#00ff8844':f.vote==='BEAR'?'#ff336644':'#6a9ab844'}}>
+                  {f.vote==='BULL'?'+':'-'}{f.weight}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Option Signal */}
+        {ai.optionSuggestion && (
+          <div className="mt-1 p-2 border font-mono" style={{ fontSize: 11, color: '#00d4ff', borderColor: '#00d4ff33', background: 'rgba(0,212,255,0.05)' }}>
+            <div className="text-dim mb-1" style={{ fontSize: 10, letterSpacing: 2 }}>OPTION PLAY</div>
+            {ai.optionSuggestion}
+          </div>
+        )}
+
+        {/* Pivot Points */}
+        {pp && (
+          <div className="p-2 border border-border/50">
+            <div className="font-mono text-dim uppercase tracking-widest mb-2" style={{fontSize:10}}>
+              Pivot Points (Standard)
+            </div>
+            <div className="grid grid-cols-3 gap-1">
+              {[
+                {k:'R3', v:pp.r3, c:'#ff3366'},
+                {k:'R2', v:pp.r2, c:'#ff6b35'},
+                {k:'R1', v:pp.r1, c:'#ffd70099'},
+                {k:'PP', v:pp.pp, c:'#00d4ff'},
+                {k:'S1', v:pp.s1, c:'#ffd70099'},
+                {k:'S2', v:pp.s2, c:'#00ff8899'},
+              ].map(({ k, v, c }) => (
+                <div key={k} className="flex justify-between items-center px-1.5 py-1 border border-border/30"
+                  style={{background: data.price && Math.abs(data.price - v) < (data.atr || 10) ? `${c}12` : 'transparent'}}>
+                  <span className="font-mono" style={{fontSize:10, color:c}}>{k}</span>
+                  <span className="font-mono text-muted" style={{fontSize:10}}>₹{fmt(v)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* BB Position */}
+        {data.bb && (
+          <div className="p-2 border border-border/50">
+            <div className="font-mono text-dim uppercase tracking-widest mb-2" style={{ fontSize: 10 }}>Bollinger Band Position</div>
+            <div className="flex justify-between font-mono" style={{ fontSize: 11 }}>
+              <span style={{color:'#6a9ab8'}}>Lower: ₹{fmt(data.bb.lower)}</span>
+              <span className="text-accent">Mid: ₹{fmt(data.bb.middle)}</span>
+              <span style={{color:'#ff6b35'}}>Upper: ₹{fmt(data.bb.upper)}</span>
+            </div>
+            <div className="mt-2 h-1.5 rounded" style={{ background: '#1a3050', position: 'relative' }}>
+              <div className="absolute top-0 bottom-0 rounded" style={{
+                background: accentColor,
+                left: `${Math.max(0, Math.min(96, ((data.price - data.bb.lower) / Math.max(data.bb.upper - data.bb.lower, 1)) * 100))}%`,
+                width: 4,
+              }} />
+            </div>
+          </div>
+        )}
+
+        {/* IST Trading Windows */}
+        <div className="p-2 border border-border/50">
+          <div className="font-mono text-dim uppercase tracking-widest mb-2" style={{fontSize:10}}>IST Trading Windows</div>
+          {IST_WINDOWS.map((w, i) => (
+            <div key={i} className="flex items-center gap-2 py-1 border-b border-border/20 last:border-0"
+              style={{ background: currentWindow === i ? `${w.color}10` : 'transparent' }}>
+              {currentWindow === i && <span style={{fontSize:10, color:w.color}}>▶</span>}
+              {currentWindow !== i && <span style={{fontSize:10, color:'#3a5a7a'}}>·</span>}
+              <span className="font-mono font-bold" style={{fontSize:10, color:w.color, width:90}}>{w.label}</span>
+              <span className="font-mono text-dim" style={{fontSize:10}}>{w.desc}</span>
+            </div>
+          ))}
         </div>
       </div>
     </div>

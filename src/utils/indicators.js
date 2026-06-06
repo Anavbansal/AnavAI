@@ -24,12 +24,20 @@ export function calcEMASeries(closes, period) {
 
 export function calcRSI(closes, period = 14) {
   if (!closes || closes.length < period + 1) return 50
-  const changes = closes.slice(1).map((c, i) => c - closes[i])
-  const slice = changes.slice(-period)
-  const gains = slice.filter(c => c > 0).reduce((a, b) => a + b, 0) / period
-  const losses = Math.abs(slice.filter(c => c < 0).reduce((a, b) => a + b, 0)) / period
-  if (losses === 0) return 100
-  return 100 - 100 / (1 + gains / losses)
+  // Wilder's smoothing (matches backend)
+  let avgGain = 0, avgLoss = 0
+  for (let i = 1; i <= period; i++) {
+    const diff = closes[i] - closes[i - 1]
+    if (diff > 0) avgGain += diff; else avgLoss -= diff
+  }
+  avgGain /= period; avgLoss /= period
+  for (let i = period + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1]
+    avgGain = (avgGain * (period - 1) + Math.max(diff, 0)) / period
+    avgLoss = (avgLoss * (period - 1) + Math.max(-diff, 0)) / period
+  }
+  if (!avgLoss) return 100
+  return 100 - 100 / (1 + avgGain / avgLoss)
 }
 
 export function calcVWAP(candles) {

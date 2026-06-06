@@ -14,7 +14,7 @@ import {
 } from '../utils/indicators'
 import { buildMockAnalyzePayload } from '../utils/mockAnalysis'
 
-const BASE = (import.meta.env.VITE_ANALYZE_API_BASE_URL || import.meta.env.VITE_API_BASE_URL || 'https://2k702sbw-3002.inc1.devtunnels.ms')
+const BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3002').replace(/\/$/,'')
   .replace(/\/$/, '')
 
 const ANALYZE_URL = `${BASE}/analyze`
@@ -98,20 +98,27 @@ function transformPayload(payload, sym, timeframe) {
   const previous  = candles[candles.length - 2] ?? latest
   const exec      = payload?.executionContext ?? {}
 
-  // Price: trust backend real LTP if present, else last candle close
-  const price    = Number(payload?.price) || latest.close
+  const price     = Number(payload?.price) || latest.close
   const prevClose = previous.close
-  const vwap     = Number(payload?.vwap)  || calcVWAP(candles)
-  const ema20    = Number(payload?.ema20) || calcEMA(closes, 20)
-  const ema50    = Number(payload?.ema50) || calcEMA(closes, 50)
-  const rsi      = Number(payload?.rsi)   || calcRSI(closes, 14)
-  const atr      = Number(exec?.atr)      || calcATR(candles, 14)
-  const bb       = payload?.bollingerBands || calcBollingerBands(closes, 20)
-  const macd     = payload?.macd          || calcMACD(closes)
-  const supertrend = payload?.supertrend  || null
-  const ichimoku   = payload?.ichimoku    || null
+  const vwap      = Number(payload?.vwap)  || calcVWAP(candles)
+  const ema20     = Number(payload?.ema20) || calcEMA(closes, 20)
+  const ema50     = Number(payload?.ema50) || calcEMA(closes, 50)
+  const rsi       = Number(payload?.rsi)   || calcRSI(closes, 14)
+  const atr       = Number(exec?.atr)      || calcATR(candles, 14)
+  const bb        = payload?.bollingerBands || calcBollingerBands(closes, 20)
+  const macd      = payload?.macd          || calcMACD(closes)
+  const supertrend  = payload?.supertrend  || null
+  const ichimoku    = payload?.ichimoku    || null
+  const adx         = payload?.adx         || null
+  const fibonacci   = payload?.fibonacci   || null
+  const pivotPoints = payload?.pivotPoints || null
+  const candlePatterns = Array.isArray(payload?.candlePatterns) ? payload.candlePatterns : []
+  const obv         = payload?.obv         || null
+  const riskProfile = payload?.riskProfile || { profile: 'MODERATE', atrPct: 0, description: '' }
+  const investmentGuidance = payload?.investmentGuidance || null
+  const foStrategies = Array.isArray(payload?.foStrategies) ? payload.foStrategies : []
+  const maxPain     = Number(payload?.maxPain) || 0
 
-  // Use ema20Series from server if available (avoids re-computing)
   const ema20Series = Array.isArray(payload?.ema20Series) && payload.ema20Series.length > 0
     ? payload.ema20Series
     : calcEMASeries(closes, 20)
@@ -136,22 +143,22 @@ function transformPayload(payload, sym, timeframe) {
   return {
     symbol:   cleanSymbol,
     isIndex:  INDICES.includes(cleanSymbol),
-    price,
-    open:     latest.open,
-    high:     latest.high,
-    low:      latest.low,
+    price, open: latest.open, high: latest.high, low: latest.low,
     prevClose,
-    change:   price - prevClose,
+    change:    price - prevClose,
     changePct: prevClose ? ((price - prevClose) / prevClose) * 100 : 0,
     vwap, ema20, ema50,
-    ema9:   Number(payload?.ema9)   || calcEMA(closes, 9),
-    ema200: Number(payload?.ema200) || calcEMA(closes, 200),
+    ema9:    Number(payload?.ema9)   || calcEMA(closes, 9),
+    ema100:  Number(payload?.ema100) || calcEMA(closes, 100),
+    ema200:  Number(payload?.ema200) || calcEMA(closes, 200),
     rsi, atr, bb, macd, supertrend, ichimoku,
+    adx, fibonacci, pivotPoints, candlePatterns, obv,
+    riskProfile, investmentGuidance, foStrategies, maxPain,
     support, resistance, volumeRatio, pcr,
-    regime:          exec?.marketRegime     ?? payload?.executionContext?.marketRegime ?? 'RANGE',
+    regime:           exec?.marketRegime ?? 'RANGE',
     trendConsistency: payload?.trendConsistency ?? 'DIVERGENT',
-    vwapDistancePct: Number(exec?.vwapDistancePct) || (vwap ? ((price-vwap)/vwap)*100 : 0),
-    trendStrength:   Number(exec?.trendStrength)   || 0,
+    vwapDistancePct:  Number(exec?.vwapDistancePct) || (vwap ? ((price-vwap)/vwap)*100 : 0),
+    trendStrength:    Number(exec?.trendStrength)   || 0,
     m1Trend:  tf?.m1  ?? summarizeTrend(candles, 2),
     m5Trend:  tf?.m5  ?? summarizeTrend(candles, 5),
     m15Trend: tf?.m15 ?? summarizeTrend(candles, 15),
@@ -183,6 +190,10 @@ function buildAIShape(aiAnalysis, optionSignal, symbol) {
     risks:      Array.isArray(aiAnalysis.risks)   ? aiAnalysis.risks   : [],
     newsImpact: aiAnalysis.newsImpact ?? '',
     score:      aiAnalysis.score ?? null,
+    breakdown:  Array.isArray(aiAnalysis.breakdown) ? aiAnalysis.breakdown : [],
+    bullVotes:  aiAnalysis.bullVotes ?? 0,
+    bearVotes:  aiAnalysis.bearVotes ?? 0,
+    source:     aiAnalysis.source ?? 'RULE_BASED',
     timeframeAlignment: aiAnalysis.timeframeAlignment ?? {
       shortTerm:'SIDEWAYS', mediumTerm:'SIDEWAYS', trend:'SIDEWAYS'
     },
@@ -190,22 +201,16 @@ function buildAIShape(aiAnalysis, optionSignal, symbol) {
 }
 
 // ─── PUBLIC: analyzeSymbol ────────────────────────────────────────────────────
-// mode: 'intraday' | 'delivery' | 'fo' | 'tech' (default)
-// When mode='delivery' the server will use V3 Historical API (daily candles)
-// When mode='intraday' or 'fo' the server will use V3 Intraday API
-export async function analyzeSymbol(input, timeframe = '5', mode = 'tech') {
+export async function analyzeSymbol(input, timeframe = '5') {
   const symbol = typeof input === 'string' ? input : input?.symbol
   const instrumentKey = typeof input === 'string' ? '' : (input?.instrumentKey ?? '')
   const clean = cleanSym(symbol)
-
-  // Delivery always uses daily timeframe regardless of UI selection
-  const resolvedTf = mode === 'delivery' ? 'D' : timeframe
 
   try {
     const res = await fetch(ANALYZE_URL, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ symbol: clean, instrumentKey, resolution: resolvedTf, mode }),
+      body:    JSON.stringify({ symbol: clean, instrumentKey, resolution: timeframe, mode: 'tech' }),
     })
 
     const payload = await res.json().catch(() => null)
