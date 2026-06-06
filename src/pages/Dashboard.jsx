@@ -13,17 +13,25 @@ import NewsPanel from '../components/NewsPanel'
 import CompanyFundamentals from '../components/CompanyFundamentals'
 import AIAssistant from '../components/AIAssistant'
 import { useAnalysis } from '../hooks/useAnalysis'
+import RiskCalculator from '../components/RiskCalculator'
+import MarketScanner from '../components/MarketScanner'
+import PriceAlerts from '../components/PriceAlerts'
+import EconomicCalendar from '../components/EconomicCalendar'
 
 const TABS = [
-  {id:'overview', label:'Overview',    icon:'📊'},
-  {id:'intraday', label:'Intraday',    icon:'⚡'},
-  {id:'delivery', label:'Delivery',    icon:'📦'},
-  {id:'fo',       label:'F&O Greeks',  icon:'⚙'},
-  {id:'portfolio',label:'Portfolio',   icon:'💼'},
-  {id:'mf',       label:'Mutual Funds',icon:'🏦'},
+  {id:'overview',  label:'Overview',     icon:'📊'},
+  {id:'intraday',  label:'Intraday',     icon:'⚡'},
+  {id:'delivery',  label:'Delivery',     icon:'📦'},
+  {id:'fo',        label:'F&O Greeks',   icon:'⚙'},
+  {id:'scanner',   label:'Scanner',      icon:'📡'},
+  {id:'alerts',    label:'Alerts',       icon:'🔔'},
+  {id:'calendar',  label:'Calendar',     icon:'📅'},
+  {id:'risk',      label:'Risk Calc',    icon:'🎯'},
+  {id:'portfolio', label:'Portfolio',    icon:'💼'},
+  {id:'mf',        label:'Mutual Funds', icon:'🏦'},
 ]
 
-const MODE = {overview:'tech',intraday:'intraday',delivery:'delivery',fo:'fo',portfolio:'tech',mf:'tech'}
+const MODE = {overview:'tech',intraday:'intraday',delivery:'delivery',fo:'fo',scanner:'tech',alerts:'tech',calendar:'tech',risk:'tech',portfolio:'tech',mf:'tech'}
 
 export default function Dashboard() {
   const [tab,  setTab]  = useState('overview')
@@ -36,7 +44,7 @@ export default function Dashboard() {
 
   function changeTab(t) {
     setTab(t)
-    if (['portfolio','mf'].includes(t)) return
+    if (['portfolio','mf','scanner','alerts','calendar','risk'].includes(t)) return
     const mode = MODE[t]||'tech'
     const tf   = t==='delivery'?'D':curTf
     analyze(curSym, tf, mode)
@@ -162,6 +170,10 @@ export default function Dashboard() {
           </div>
         )}
 
+        {tab==='scanner'   && <MarketScanner onSelectSymbol={handleSelectSymbol}/>}
+        {tab==='alerts'    && <PriceAlerts data={data}/>}
+        {tab==='calendar'  && <EconomicCalendar/>}
+        {tab==='risk'      && <RiskCalculator/>}
         {tab==='portfolio' && <Portfolio onSelectSymbol={handleSelectSymbol}/>}
         {tab==='mf' && <MutualFunds/>}
       </main>

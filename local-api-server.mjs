@@ -6,6 +6,7 @@
  */
 
 import http from "node:http";
+import { WebSocketServer } from "ws";
 import { URL } from "node:url";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
@@ -1929,6 +1930,105 @@ IMPORTANT: ${isLive ? `You just fetched LIVE data for ${activeSym}. Use those ex
     writeJson(req, res, 500, { status:"error", message: err.message || "Unexpected server error" });
   }
 });
+
+
+// ─── WebSocket Server for live price streaming + alerts ──────────────────────
+const wss = new WebSocketServer({ server });
+const wsClients = new Map(); // ws → {subscriptions:Set, token, clientId}
+const priceCache = new Map(); // symbol → {price, prevClose, change, changePct, ts}
+const alertRegistry = new Map(); // alertId → alert obj
+let alertSeq = 1;
+
+wss.on('connection', (ws) => {
+  const cid = Date.now().toString(36) + Math.random().toString(36).slice(2,5);
+  wsClients.set(ws, { subscriptions: new Set(), token:'', clientId:cid });
+  console.log(`[WS] +client ${cid} (total:${wss.clients.size})`);
+
+  ws.on('message', async (raw) => {
+    try {
+      const msg = JSON.parse(raw.toString());
+      const client = wsClients.get(ws);
+      if (!client) return;
+
+      if (msg.type === 'AUTH') {
+        client.token = msg.token || '';
+        ws.send(JSON.stringify({ type:'AUTHED', clientId:cid }));
+      }
+      if (msg.type === 'SUBSCRIBE') {
+        const syms = (Array.isArray(msg.symbols) ? msg.symbols : [msg.symbol]).filter(Boolean);
+        syms.forEach(s => client.subscriptions.add(s.toUpperCase()));
+        ws.send(JSON.stringify({ type:'SUBSCRIBED', symbols:[...client.subscriptions] }));
+        // Send cached prices immediately
+        for (const s of client.subscriptions) {
+          const cached = priceCache.get(s);
+          if (cached) ws.send(JSON.stringify({ type:'PRICE', symbol:s, ...cached }));
+        }
+      }
+      if (msg.type === 'UNSUBSCRIBE') {
+        client.subscriptions.delete((msg.symbol||'').toUpperCase());
+      }
+      if (msg.type === 'SET_ALERT') {
+        const id = 'A' + (alertSeq++);
+        alertRegistry.set(id, { ...msg, clientId:cid, ws });
+        ws.send(JSON.stringify({ type:'ALERT_SET', alertId:id, symbol:msg.symbol, alertType:msg.alertType, value:msg.value }));
+      }
+      if (msg.type === 'CANCEL_ALERT') {
+        alertRegistry.delete(msg.alertId);
+        ws.send(JSON.stringify({ type:'ALERT_CANCELLED', alertId:msg.alertId }));
+      }
+      if (msg.type === 'GET_ALERTS') {
+        const mine = [...alertRegistry.entries()]
+          .filter(([,a]) => a.clientId === cid)
+          .map(([id,a]) => ({ alertId:id, symbol:a.symbol, alertType:a.alertType, value:a.value }));
+        ws.send(JSON.stringify({ type:'ALERTS_LIST', alerts:mine }));
+      }
+    } catch {}
+  });
+
+  ws.on('close', () => { wsClients.delete(ws); });
+  ws.on('error', () => wsClients.delete(ws));
+});
+
+// Price broadcast loop
+async function broadcastPrices() {
+  if (wss.clients.size === 0) return;
+  const symToClients = new Map();
+  for (const [ws, c] of wsClients) {
+    if (ws.readyState !== 1) continue;
+    for (const s of c.subscriptions) {
+      if (!symToClients.has(s)) symToClients.set(s, []);
+      symToClients.get(s).push({ ws, token:c.token });
+    }
+  }
+  for (const [sym, clients] of symToClients) {
+    const token = clients.find(c=>c.token)?.token || '';
+    try {
+      const resolved = await resolveInstrument(sym, token).catch(()=>null);
+      if (!resolved?.instrumentKey) continue;
+      const ltp = await fetchLTP(token, resolved.instrumentKey);
+      if (!ltp) continue;
+      const prev = priceCache.get(sym);
+      const prevClose = prev?.prevClose || ltp;
+      const change = +(ltp - prevClose).toFixed(2);
+      const changePct = prevClose ? +((change/prevClose)*100).toFixed(2) : 0;
+      const pd = { price:ltp, prevClose, change, changePct, ts:Date.now() };
+      priceCache.set(sym, pd);
+      const msg = JSON.stringify({ type:'PRICE', symbol:sym, ...pd });
+      for (const { ws } of clients) { if (ws.readyState===1) ws.send(msg); }
+      // Check alerts
+      for (const [id, a] of alertRegistry) {
+        if (a.symbol?.toUpperCase() !== sym) continue;
+        const fired = (a.alertType==='ABOVE' && ltp>=a.value) || (a.alertType==='BELOW' && ltp<=a.value);
+        if (fired) {
+          const am = JSON.stringify({ type:'ALERT_TRIGGERED', alertId:id, symbol:sym, price:ltp, alertType:a.alertType, targetValue:a.value });
+          if (a.ws?.readyState===1) a.ws.send(am);
+          alertRegistry.delete(id);
+        }
+      }
+    } catch {}
+  }
+}
+setInterval(broadcastPrices, 3000);
 
 server.listen(PORT, "0.0.0.0", () => {
   const sdkStatus = UpstoxSDK.getConfigStatus();
