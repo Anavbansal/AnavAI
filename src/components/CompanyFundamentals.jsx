@@ -1,153 +1,188 @@
 import React, { useState, useEffect } from 'react'
-import { searchSymbol } from '../services/marketData'
 import { getCompanyFundamentals } from '../lib/api'
+import { API_BASE_URL } from '../config'
 
 const RATIO_LABELS = {
-  pe_ratio: 'P/E Ratio',
-  pb_ratio: 'P/B Ratio',
-  dividend_yield: 'Div Yield %',
-  roe: 'ROE %',
-  roce: 'ROCE %',
-  eps: 'EPS',
-  debt_to_equity: 'Debt/Equity',
-  book_value_per_share: 'Book Value',
-  market_cap: 'Market Cap',
-  sector_pe: 'Sector P/E',
+  pe_ratio:            'P/E Ratio',
+  pb_ratio:            'P/B Ratio',
+  dividend_yield:      'Div Yield %',
+  roe:                 'ROE %',
+  roce:                'ROCE %',
+  eps:                 'EPS (₹)',
+  debt_to_equity:      'Debt/Equity',
+  book_value_per_share:'Book Value',
+  market_cap:          'Mkt Cap',
+  sector_pe:           'Sector P/E',
+  face_value:          'Face Value',
+  week52High:          '52W High',
+  week52Low:           '52W Low',
 }
 
-function formatRatioValue(key, val) {
-  if (typeof val !== 'number') return String(val);
-  if (key.includes('yield') || key.includes('roe') || key.includes('roce')) return `${val.toFixed(2)}%`;
-  if (key.includes('eps') || key.includes('value')) return `₹${val.toFixed(2)}`;
-  if (key.includes('market_cap')) return `₹${(val / 10000000).toFixed(2)}Cr`;
-  return val.toFixed(2);
+function fmt(key, val) {
+  if (val == null || val === '') return '—'
+  if (typeof val !== 'number') return String(val)
+  if (key === 'market_cap') return `₹${(val / 1e7).toFixed(2)} Cr`
+  if (key.includes('yield') || key.includes('roe') || key.includes('roce')) return `${val.toFixed(2)}%`
+  if (key.includes('eps') || key.includes('value') || key.includes('High') || key.includes('Low')) return `₹${val.toFixed(2)}`
+  return val.toFixed(2)
 }
 
-export default function CompanyFundamentals({ symbol }) {
-  const [profile, setProfile] = useState(null)
-  const [ratios, setRatios] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
-
-  useEffect(() => {
-    let isMounted = true;
-    async function loadData() {
-      if (!symbol) return;
-      try {
-        setLoading(true);
-        setError(null);
-        setProfile(null);
-        setRatios(null);
-
-        // The Upstox Fundamentals API relies on ISINs, we extract this using our search API
-        const searchRes = await searchSymbol(symbol);
-        const match = searchRes.find(r => 
-          r.symbol === symbol || r.tradingSymbol === symbol || r.name?.toUpperCase().includes(symbol)
-        );
-        const isin = match?.isin || match?.info?.isin;
-
-        if (!isin) {
-          throw new Error(`ISIN not found for ${symbol}. Fundamentals require an ISIN.`);
-        }
-
-        const token = localStorage.getItem('upstox_access_token') || null;
-
-        // We fetch profile outline and financial ratios concurrently
-        const [profRes, ratRes] = await Promise.allSettled([
-          getCompanyFundamentals(token, { isin, type: 'profile' }),
-          getCompanyFundamentals(token, { isin, type: 'key-ratios' })
-        ]);
-
-        if (isMounted) {
-          let loadedAny = false;
-          if (profRes.status === 'fulfilled' && profRes.value?.status === 'success') {
-            setProfile(profRes.value.data);
-            loadedAny = true;
-          }
-          if (ratRes.status === 'fulfilled' && ratRes.value?.status === 'success') {
-            setRatios(ratRes.value.data);
-            loadedAny = true;
-          }
-          if (!loadedAny) {
-             setError('Fundamental data unavailable for this instrument.');
-          }
-        }
-      } catch (err) {
-        if (isMounted) setError(err.message);
-      } finally {
-        if (isMounted) setLoading(false);
-      }
-    }
-    loadData();
-    return () => { isMounted = false; }
-  }, [symbol]);
-
-  if (!symbol) return (
-    <div className="panel flex items-center justify-center py-10 gap-3">
-      <div style={{ fontSize: 32, opacity: 0.3 }}>🏢</div>
-      <div>
-        <div className="font-display text-muted text-xs tracking-widest">FUNDAMENTALS IDLE</div>
-        <div className="font-mono text-dim mt-1" style={{ fontSize: 11 }}>Analyze a stock to view fundamentals</div>
+function StatCard({ label, value, accent }) {
+  return (
+    <div style={{
+      padding: '8px 10px', border: '1px solid #162030',
+      background: '#060d14', borderRadius: 4,
+    }}>
+      <div style={{ fontFamily: 'Share Tech Mono, monospace', color: '#2a4a6a', fontSize: 9, letterSpacing: 1, marginBottom: 4 }}>
+        {label}
+      </div>
+      <div style={{ fontFamily: 'Rajdhani, sans-serif', fontWeight: 700, fontSize: 14, color: accent || '#cce0f5' }}>
+        {value}
       </div>
     </div>
-  );
+  )
+}
+
+export default function CompanyFundamentals({ symbol, instrumentKey }) {
+  const [data, setData]       = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError]     = useState(null)
+
+  useEffect(() => {
+    if (!symbol && !instrumentKey) return
+    let isMounted = true
+    setLoading(true); setError(null); setData(null)
+
+    async function load() {
+      try {
+        const token = localStorage.getItem('upstox_access_token') || ''
+        // Extract clean symbol from instrument key if needed
+        const sym = symbol || (instrumentKey || '').split('|').pop()?.replace(/\+/g,' ').trim() || ''
+
+        const params = new URLSearchParams({ symbol: sym })
+        if (instrumentKey) params.set('isin', instrumentKey)
+
+        const res = await fetch(`${API_BASE_URL}/fundamentals?${params}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        })
+        const json = await res.json()
+
+        if (isMounted) {
+          if (json?.status === 'success' && json?.data) setData(json.data)
+          else setError(json?.message || 'Data unavailable')
+        }
+      } catch (e) {
+        if (isMounted) setError(e.message)
+      } finally {
+        if (isMounted) setLoading(false)
+      }
+    }
+
+    load()
+    return () => { isMounted = false }
+  }, [symbol, instrumentKey])
+
+  if (!symbol && !instrumentKey) return (
+    <div className="panel" style={{ display:'flex', alignItems:'center', justifyContent:'center', padding:40, flexDirection:'column', gap:10 }}>
+      <div style={{ fontSize: 36, opacity: 0.15 }}>🏢</div>
+      <div className="font-mono" style={{ color:'#2a4a6a', fontSize:11, letterSpacing:3 }}>FUNDAMENTALS IDLE</div>
+      <div className="font-mono" style={{ color:'#2a4a6a', fontSize:10 }}>Search and analyze a stock first</div>
+    </div>
+  )
 
   return (
     <div className="panel animate-fadein">
       <div className="panel-header">
         <div className="panel-title">🏢 Company Fundamentals</div>
-        <span className="ml-auto font-mono text-accent" style={{ fontSize: 10 }}>Upstox API</span>
+        <span style={{ marginLeft:'auto', fontFamily:'Share Tech Mono', color:'#00cfff', fontSize:10 }}>
+          {data?.sector || 'NSE · BSE'}
+        </span>
       </div>
 
-      <div className="p-3 flex flex-col gap-4">
+      <div style={{ padding:'12px 14px', display:'flex', flexDirection:'column', gap:14 }}>
+
         {loading && (
-          <div className="flex justify-center items-center py-6 gap-2">
-            <div className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
-            <span className="font-mono text-accent animate-blink text-xs">FETCHING FUNDAMENTALS...</span>
+          <div style={{ display:'flex', justifyContent:'center', alignItems:'center', gap:10, padding:24 }}>
+            <div className="spinner" style={{ width:16, height:16, borderWidth:2 }} />
+            <span className="font-mono" style={{ color:'#00cfff', fontSize:11 }}>FETCHING FUNDAMENTALS...</span>
           </div>
         )}
 
         {error && !loading && (
-          <div className="text-center py-4 text-danger font-mono text-xs">{error}</div>
+          <div style={{ textAlign:'center', padding:16, color:'#ff3366', fontFamily:'Share Tech Mono', fontSize:11 }}>
+            ⚠ {error}
+          </div>
         )}
 
-        {!loading && profile && (
-          <div>
-            <div className="flex justify-between items-start mb-2">
-              <div>
-                <div className="font-display font-bold text-gray-100" style={{ fontSize: 16 }}>
-                  {profile.company_name || symbol}
+        {data && !loading && (
+          <>
+            {/* Company header */}
+            <div style={{ borderBottom:'1px solid #162030', paddingBottom:12 }}>
+              <div style={{ fontFamily:'Rajdhani, sans-serif', fontWeight:900, fontSize:18, color:'#cce0f5', letterSpacing:1 }}>
+                {data.company_name || symbol}
+              </div>
+              <div style={{ fontFamily:'Share Tech Mono', color:'#7aa8c8', fontSize:11, marginTop:4 }}>
+                {[data.sector, data.industry].filter(Boolean).join(' · ')}
+                {data.isin && <span style={{ color:'#2a4a6a', marginLeft:8 }}>ISIN: {data.isin}</span>}
+              </div>
+              {data.listingDate && (
+                <div style={{ fontFamily:'Share Tech Mono', color:'#2a4a6a', fontSize:10, marginTop:3 }}>
+                  Listed: {data.listingDate}
+                  {data.series && <span style={{ marginLeft:8 }}>Series: {data.series}</span>}
                 </div>
-                <div className="font-mono text-muted mt-1" style={{ fontSize: 11 }}>
-                  {profile.sector || 'Sector Data Unavailable'} · ISIN: {profile.isin}
+              )}
+              {data.business_description && (
+                <div style={{ fontFamily:'Share Tech Mono', color:'#7aa8c8', fontSize:10, marginTop:8, lineHeight:1.6 }}>
+                  {data.business_description}
+                </div>
+              )}
+            </div>
+
+            {/* Key ratios grid */}
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:6 }}>
+              {Object.entries(RATIO_LABELS).map(([key, label]) => {
+                const val = data[key]
+                if (val == null) return null
+                const accent = key === 'pe_ratio' && val > 50 ? '#ff3366'
+                  : key === 'pe_ratio' && val < 15 ? '#00e87a'
+                  : key === 'dividend_yield' && val > 2 ? '#00e87a'
+                  : key === 'week52High' ? '#00e87a'
+                  : key === 'week52Low' ? '#ff3366'
+                  : '#cce0f5'
+                return <StatCard key={key} label={label} value={fmt(key, val)} accent={accent}/>
+              })}
+            </div>
+
+            {/* 52W range bar */}
+            {data.week52High && data.week52Low && (
+              <div>
+                <div style={{ fontFamily:'Share Tech Mono', color:'#2a4a6a', fontSize:9, letterSpacing:2, marginBottom:6 }}>
+                  52-WEEK RANGE
+                </div>
+                <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                  <span style={{ fontFamily:'Share Tech Mono', color:'#ff3366', fontSize:10 }}>₹{data.week52Low?.toFixed(0)}</span>
+                  <div style={{ flex:1, height:6, background:'#0d1825', borderRadius:3, overflow:'hidden', position:'relative' }}>
+                    <div style={{
+                      position:'absolute', height:'100%',
+                      background:'linear-gradient(90deg, #ff3366, #ffd700, #00e87a)',
+                      width:'100%', opacity:0.4, borderRadius:3,
+                    }}/>
+                    {data.pe_ratio && (
+                      <div style={{
+                        position:'absolute', top:'50%', transform:'translateY(-50%)',
+                        width:10, height:10, borderRadius:'50%', background:'#00cfff',
+                        boxShadow:'0 0 8px #00cfff',
+                        left: `calc(${Math.max(0,Math.min(100, ((data.week52High - data.week52Low) > 0
+                          ? 50
+                          : 50)))}% - 5px)`,
+                      }}/>
+                    )}
+                  </div>
+                  <span style={{ fontFamily:'Share Tech Mono', color:'#00e87a', fontSize:10 }}>₹{data.week52High?.toFixed(0)}</span>
                 </div>
               </div>
-            </div>
-            {profile.business_description && (
-              <p className="text-gray-300 leading-relaxed font-mono mt-2" style={{ fontSize: 11 }}>
-                {profile.business_description}
-              </p>
             )}
-          </div>
-        )}
-
-        {!loading && ratios && (
-          <div className="grid grid-cols-2 gap-2 mt-2">
-            {(Array.isArray(ratios) ? ratios : [ratios]).flatMap((ratioObj, i) => 
-              Object.entries(ratioObj).map(([k, v]) => {
-                if (v == null || typeof v === 'object') return null;
-                const label = RATIO_LABELS[k] || k.replace(/_/g, ' ').toUpperCase();
-                return (
-                  <div key={`${i}-${k}`} className="p-2 border border-border/50 bg-bg3">
-                    <div className="font-mono text-dim uppercase tracking-wider" style={{ fontSize: 10 }}>{label}</div>
-                    <div className="font-display font-bold mt-1 text-gray-100" style={{ fontSize: 13 }}>
-                      {formatRatioValue(k, v)}
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
+          </>
         )}
       </div>
     </div>

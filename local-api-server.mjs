@@ -1183,6 +1183,219 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // ── /news — Live News via Google RSS fallback (Upstox news needs live token) ──
+    if (req.method === "GET" && url.pathname === "/news") {
+      const instrumentKeys = url.searchParams.get("instrument_keys") || "";
+      const category = url.searchParams.get("category") || "market";
+      const token = getToken(req);
+
+      // Try Upstox news first if token present
+      if (token && token.length > 50) {
+        try {
+          const newsRes = await UpstoxSDK.getNews({ category, instrument_keys: instrumentKeys }, token);
+          if (newsRes?.status === "success") {
+            writeJson(req, res, 200, newsRes);
+            return;
+          }
+        } catch (e) {
+          console.warn("[News] Upstox failed:", e.message, "— falling back to RSS");
+        }
+      }
+
+      // Free fallback: Google News RSS
+      try {
+        // Extract readable symbol from instrument key e.g. NSE_EQ|INE002A01018 → RELIANCE
+        const symRaw = instrumentKeys.split("|").pop()?.replace(/+/g," ").trim() || "Nifty 50";
+        const query  = encodeURIComponent(symRaw + " NSE stock market India");
+        const rssUrl = `https://news.google.com/rss/search?q=${query}&hl=en-IN&gl=IN&ceid=IN:en`;
+
+        const rssRes = await fetch(rssUrl, {
+          headers: { "User-Agent": "Mozilla/5.0 (compatible; AnavAI/2.0; +https://anavai.onrender.com)" }
+        });
+
+        if (!rssRes.ok) throw new Error(`RSS HTTP ${rssRes.status}`);
+        const rssText = await rssRes.text();
+
+        // Parse RSS items
+        const items = [];
+        const itemRx = /<item>([sS]*?)</item>/g;
+        let m;
+        while ((m = itemRx.exec(rssText)) !== null && items.length < 12) {
+          const block = m[1];
+          const title     = (/<title><![CDATA[([sS]*?)]]></title>/.exec(block) || /<title>([sS]*?)</title>/.exec(block))?.[1]?.trim() || "";
+          const link      = (/<link>([sS]*?)</link>/.exec(block))?.[1]?.replace(/&amp;/g,"&").trim() || "";
+          const pubDate   = (/<pubDate>([sS]*?)</pubDate>/.exec(block))?.[1]?.trim() || "";
+          const source    = (/<source[^>]*>([sS]*?)</source>/.exec(block))?.[1]?.trim() || "Google News";
+
+          if (!title) continue;
+
+          // Sentiment from keywords
+          const tl = title.toLowerCase();
+          const bullKw = ["surge","rally","gain","rise","profit","record","high","buy","upgrade","beat","growth","strong","outperform","positive","jump","soar","bull"];
+          const bearKw = ["fall","drop","crash","loss","decline","sell","downgrade","miss","weak","concern","risk","cut","slump","bear","negative","plunge","tumble"];
+          const sentiment = bullKw.some(k=>tl.includes(k)) ? "BULLISH" : bearKw.some(k=>tl.includes(k)) ? "BEARISH" : "NEUTRAL";
+
+          items.push({
+            id: `rss-${items.length}`,
+            headline: title,
+            title,
+            link,
+            url: link,
+            article_link: link,
+            source,
+            sentiment,
+            publishedAt: pubDate ? new Date(pubDate).toISOString() : new Date().toISOString(),
+            published_timestamp: pubDate ? new Date(pubDate).getTime() : Date.now(),
+          });
+        }
+
+        console.log(`[News RSS] ${items.length} articles for "${symRaw}"`);
+        writeJson(req, res, 200, {
+          status: "success",
+          data: { [instrumentKeys || "market"]: items },
+          _source: "google_news_rss",
+        });
+      } catch (rssErr) {
+        console.error("[News RSS] Failed:", rssErr.message);
+        writeJson(req, res, 200, { status: "success", data: {}, _source: "empty" });
+      }
+      return;
+    }
+
+    // ── /fundamentals — Company Fundamentals (NSE free API + Screener fallback) ──
+    if (req.method === "GET" && url.pathname === "/fundamentals") {
+      const isin   = url.searchParams.get("isin")   || "";
+      const symbol = url.searchParams.get("symbol") || "";
+      const token  = getToken(req);
+
+      if (!isin && !symbol) {
+        writeJson(req, res, 400, { status:"error", message:"isin or symbol required" });
+        return;
+      }
+
+      // Clean NSE symbol (remove exchange prefix, -EQ suffix)
+      const nseSymbol = symbol
+        .replace(/^(NSE:|BSE:|NSE_EQ|)/i,"")
+        .replace(/-(EQ|BE|SM|ST)$/i,"")
+        .split("|").pop()
+        .trim()
+        .toUpperCase();
+
+      let fundamentalData = null;
+
+      // 1. Try Upstox fundamentals if token available
+      if (token && token.length > 50 && isin) {
+        try {
+          const [profRes, ratRes] = await Promise.allSettled([
+            UpstoxSDK.getCompanyFundamentals({ isin, type:"profile" }, token),
+            UpstoxSDK.getCompanyFundamentals({ isin, type:"key-ratios" }, token),
+          ]);
+          if (profRes.status==="fulfilled" && profRes.value?.status==="success") {
+            fundamentalData = { ...(profRes.value.data||{}) };
+            if (ratRes.status==="fulfilled" && ratRes.value?.status==="success") {
+              Object.assign(fundamentalData, ratRes.value.data||{});
+            }
+            console.log(`[Fundamentals] Upstox data for ${nseSymbol}`);
+          }
+        } catch(e) {
+          console.warn("[Fundamentals] Upstox failed:", e.message);
+        }
+      }
+
+      // 2. NSE India free API (no auth needed)
+      if (!fundamentalData && nseSymbol) {
+        try {
+          const nseRes = await fetch(
+            `https://www.nseindia.com/api/quote-equity?symbol=${encodeURIComponent(nseSymbol)}`,
+            { headers: {
+              "Accept":"application/json",
+              "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+              "Referer":"https://www.nseindia.com",
+              "Accept-Language":"en-US,en;q=0.9",
+            }, signal: AbortSignal.timeout(8000) }
+          );
+          if (nseRes.ok) {
+            const nseData = await nseRes.json();
+            const info      = nseData?.info      || {};
+            const metadata  = nseData?.metadata  || {};
+            const priceInfo = nseData?.priceInfo  || {};
+            const industryInfo = nseData?.industryInfo || {};
+            fundamentalData = {
+              company_name:        info?.companyName || nseSymbol,
+              sector:              industryInfo?.sector || info?.sector || "",
+              industry:            industryInfo?.industry || info?.industry || "",
+              isin:                info?.isin || isin,
+              business_description:`${info?.companyName||nseSymbol} — Listed on NSE. Sector: ${industryInfo?.sector||info?.sector||"N/A"}. Industry: ${industryInfo?.industry||"N/A"}.`,
+              pe_ratio:            Number(metadata?.pdSectorPe) || null,
+              pb_ratio:            Number(priceInfo?.pbRatio)   || null,
+              eps:                 Number(metadata?.eps)        || null,
+              market_cap:          Number(nseData?.securityInfo?.issuedCap) || null,
+              dividend_yield:      Number(priceInfo?.dividendYield) || null,
+              face_value:          Number(metadata?.pdFaceValue)    || null,
+              week52High:          Number(priceInfo?.weekHighLow?.max) || null,
+              week52Low:           Number(priceInfo?.weekHighLow?.min) || null,
+              listingDate:         nseData?.metadata?.listingDate || null,
+              series:              metadata?.series || null,
+            };
+            console.log(`[Fundamentals] NSE data for ${nseSymbol}`);
+          }
+        } catch (nseErr) {
+          console.warn("[Fundamentals] NSE failed:", nseErr.message);
+        }
+      }
+
+      // 3. Screener.in fallback (scrape basics)
+      if (!fundamentalData && nseSymbol) {
+        try {
+          const scRes = await fetch(
+            `https://www.screener.in/company/${nseSymbol}/`,
+            { headers: { "User-Agent":"Mozilla/5.0 (compatible; AnavAI/2.0)" },
+              signal: AbortSignal.timeout(8000) }
+          );
+          if (scRes.ok) {
+            const html = await scRes.text();
+            const getVal = (label) => {
+              const rx = new RegExp(label + '[\\s\\S]*?<span[^>]*>([\\d.,]+)<\/span>','i');
+              const m = rx.exec(html);
+              return m ? parseFloat(m[1].replace(/,/g,'')) : null;
+            };
+            const nameMatch = /<title>([^|<]+)/.exec(html);
+            fundamentalData = {
+              company_name:  nameMatch?.[1]?.trim() || nseSymbol,
+              sector:        "See Screener.in",
+              isin,
+              pe_ratio:      getVal("P\/E"),
+              pb_ratio:      getVal("Price to Book"),
+              eps:           getVal("EPS"),
+              market_cap:    getVal("Market Cap"),
+              dividend_yield:getVal("Dividend Yield"),
+              week52High:    null,
+              week52Low:     null,
+              business_description: `Data sourced from Screener.in for ${nseSymbol}.`,
+            };
+            console.log(`[Fundamentals] Screener.in data for ${nseSymbol}`);
+          }
+        } catch(scErr) {
+          console.warn("[Fundamentals] Screener failed:", scErr.message);
+        }
+      }
+
+      if (fundamentalData) {
+        writeJson(req, res, 200, { status:"success", data: fundamentalData });
+      } else {
+        writeJson(req, res, 200, {
+          status:"success",
+          data: {
+            company_name: nseSymbol || isin || "Unknown",
+            sector: "Data unavailable",
+            isin,
+            business_description: "Fundamental data not available. Please ensure you are using a valid NSE symbol.",
+          }
+        });
+      }
+      return;
+    }
+
     // ── /api/assistant — AI Trading Assistant Chat ───────────────────────────
     if (req.method === "POST" && url.pathname === "/api/assistant") {
       const body = await readBody(req);
