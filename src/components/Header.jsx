@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { API_BASE_URL, UPSTOX_REDIRECT_URI } from '../config'
 
 const TICKERS = [
   {sym:'NIFTY 50',p:24850,c:+0.42},{sym:'BANK NIFTY',p:52210,c:+0.61},
@@ -14,8 +15,9 @@ const TICKERS = [
 ]
 
 export default function Header() {
-  const [time, setTime] = useState('')
-  const [open, setOpen] = useState(false)
+  const [time, setTime]       = useState('')
+  const [mktOpen, setMktOpen] = useState(false)
+  const [tokenStatus, setTokenStatus] = useState('none') // 'none' | 'active' | 'connecting'
   const nav = useNavigate()
 
   useEffect(() => {
@@ -24,17 +26,55 @@ export default function Header() {
       const pad = n => String(n).padStart(2,'0')
       setTime(`${pad(ist.getHours())}:${pad(ist.getMinutes())}:${pad(ist.getSeconds())} IST`)
       const d = ist.getDay(), m = ist.getHours()*60+ist.getMinutes()
-      setOpen(d>=1&&d<=5&&m>=555&&m<930)
+      setMktOpen(d>=1&&d<=5&&m>=555&&m<930)
     }
     tick(); const id=setInterval(tick,1000); return()=>clearInterval(id)
   },[])
+
+  // Check token status on mount
+  useEffect(() => {
+    const token = localStorage.getItem('upstox_access_token')
+    const ts    = localStorage.getItem('upstox_token_ts')
+    if (token && ts) {
+      const age = Date.now() - Number(ts)
+      // Upstox token valid for ~24 hours
+      if (age < 23 * 3600 * 1000) setTokenStatus('active')
+      else { localStorage.removeItem('upstox_access_token'); setTokenStatus('none') }
+    }
+  }, [])
+
+  async function connectUpstox() {
+    setTokenStatus('connecting')
+    try {
+      const res  = await fetch(`${API_BASE_URL}/auth/url?redirect_uri=${encodeURIComponent(UPSTOX_REDIRECT_URI)}`)
+      const data = await res.json()
+      if (data?.data?.authorizationUrl) {
+        window.location.href = data.data.authorizationUrl
+      } else {
+        alert('Could not get Upstox auth URL. Check server environment variables.')
+        setTokenStatus('none')
+      }
+    } catch(e) {
+      alert('Server not reachable: ' + e.message)
+      setTokenStatus('none')
+    }
+  }
+
+  function disconnectUpstox() {
+    localStorage.removeItem('upstox_access_token')
+    localStorage.removeItem('upstox_refresh_token')
+    localStorage.removeItem('upstox_token_ts')
+    setTokenStatus('none')
+  }
+
+  function logout() { localStorage.removeItem('anav.auth'); nav('/') }
 
   const tickers = [...TICKERS,...TICKERS]
 
   return (
     <header style={{ background:'var(--bg2)', borderBottom:'1px solid var(--border)', position:'sticky', top:0, zIndex:200 }}>
       {/* Top bar */}
-      <div style={{ display:'flex', alignItems:'center', padding:'10px 20px', gap:16 }}>
+      <div style={{ display:'flex', alignItems:'center', padding:'10px 20px', gap:12 }}>
         {/* Logo */}
         <div style={{ display:'flex', alignItems:'center', gap:10 }}>
           <div style={{
@@ -51,29 +91,62 @@ export default function Header() {
 
         <div style={{flex:1}}/>
 
-        {/* Market status pill */}
+        {/* Market status */}
         <div style={{
           display:'flex', alignItems:'center', gap:6,
           padding:'5px 13px', borderRadius:20,
-          background: open ? 'rgba(34,197,94,.08)' : 'var(--surface)',
-          border: `1px solid ${open ? '#22c55e33' : 'var(--border)'}`,
+          background: mktOpen ? 'rgba(34,197,94,.08)' : 'var(--surface)',
+          border: `1px solid ${mktOpen ? '#22c55e33' : 'var(--border)'}`,
           fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:600,
         }}>
           <span style={{
-            width:6,height:6,borderRadius:'50%',display:'inline-block',
-            background: open ? 'var(--green)' : 'var(--text3)',
-            boxShadow: open ? '0 0 6px var(--green)' : 'none',
-            animation: open ? 'pulse 2s infinite' : 'none',
+            width:6, height:6, borderRadius:'50%', display:'inline-block',
+            background: mktOpen ? 'var(--green)' : 'var(--text3)',
+            boxShadow: mktOpen ? '0 0 6px var(--green)' : 'none',
+            animation: mktOpen ? 'pulse 2s infinite' : 'none',
           }}/>
-          <span style={{ color: open ? 'var(--green)' : 'var(--text3)' }}>
-            {open ? 'Market Open' : 'Market Closed'}
+          <span style={{ color: mktOpen ? 'var(--green)' : 'var(--text3)' }}>
+            {mktOpen ? 'Market Open' : 'Market Closed'}
           </span>
         </div>
+
+        {/* Upstox Connect Button */}
+        {tokenStatus === 'active' ? (
+          <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+            <div style={{
+              display:'flex', alignItems:'center', gap:6, padding:'5px 12px',
+              borderRadius:20, background:'#22c55e10', border:'1px solid #22c55e33',
+              fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:600, color:'var(--green)',
+            }}>
+              <span style={{ width:6, height:6, borderRadius:'50%', background:'var(--green)', display:'inline-block', animation:'pulse 2s infinite' }}/>
+              Upstox Live
+            </div>
+            <button onClick={disconnectUpstox}
+              style={{ background:'none', border:'none', cursor:'pointer', color:'var(--text3)', fontSize:11, padding:'4px 8px' }}
+              title="Disconnect Upstox">
+              ✕
+            </button>
+          </div>
+        ) : (
+          <button onClick={connectUpstox} disabled={tokenStatus==='connecting'}
+            style={{
+              display:'flex', alignItems:'center', gap:6, padding:'6px 14px',
+              borderRadius:20, cursor:'pointer', fontSize:12, fontWeight:600,
+              background: tokenStatus==='connecting' ? 'var(--bg2)' : 'linear-gradient(135deg,#5865f2,#22c55e)',
+              border: tokenStatus==='connecting' ? '1px solid var(--border)' : 'none',
+              color: tokenStatus==='connecting' ? 'var(--text3)' : '#fff',
+              transition:'all .2s', boxShadow: tokenStatus==='connecting' ? 'none' : '0 4px 16px #5865f244',
+            }}>
+            {tokenStatus==='connecting'
+              ? <><span className="anim-spin" style={{display:'inline-block',width:12,height:12,border:'2px solid #ffffff40',borderTopColor:'#fff',borderRadius:'50%'}}/> Connecting...</>
+              : <>🔗 Connect Upstox Live</>}
+          </button>
+        )}
 
         {/* Time */}
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:'var(--text3)', fontWeight:500 }}>{time}</div>
 
-        {/* User + logout */}
+        {/* User avatar + logout */}
         <div style={{ display:'flex', alignItems:'center', gap:8 }}>
           <div style={{
             width:30, height:30, borderRadius:'50%',
@@ -81,8 +154,7 @@ export default function Header() {
             display:'flex', alignItems:'center', justifyContent:'center',
             fontSize:13, fontWeight:700, color:'#fff', fontFamily:"'Syne',sans-serif",
           }}>A</div>
-          <button onClick={() => { localStorage.removeItem('anav.auth'); nav('/') }}
-            className="btn btn-ghost" style={{ fontSize:12, padding:'5px 12px' }}>
+          <button onClick={logout} className="btn btn-ghost" style={{ fontSize:12, padding:'5px 12px' }}>
             Sign out
           </button>
         </div>
