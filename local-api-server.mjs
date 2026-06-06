@@ -1477,6 +1477,58 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // ── /auth/callback — Upstox redirects here after login ──────────────────
+    // Exchange code for token, then redirect to frontend dashboard
+    if (req.method === "GET" && url.pathname === "/auth/callback") {
+      const code  = url.searchParams.get("code");
+      const error = url.searchParams.get("error");
+      const frontendUrl = process.env.FRONTEND_URL || "https://anav-ai.vercel.app";
+
+      if (error || !code) {
+        const msg = encodeURIComponent(error || "No code received");
+        res.writeHead(302, { Location: `${frontendUrl}/dashboard?upstox_error=${msg}` });
+        res.end(); return;
+      }
+
+      try {
+        const clientId     = process.env.UPSTOX_ALGO_CLIENT_ID     || process.env.UPSTOX_CLIENT_ID     || "";
+        const clientSecret = process.env.UPSTOX_ALGO_CLIENT_SECRET || process.env.UPSTOX_CLIENT_SECRET || "";
+        const redirectUri  = process.env.UPSTOX_ALGO_REDIRECT_URI  || process.env.UPSTOX_REDIRECT_URI  || "https://anavai.onrender.com/auth/callback";
+
+        console.log(`[Callback] Exchanging code=${code.slice(0,10)}... clientId=${clientId.slice(0,8)}...`);
+
+        const formData = new URLSearchParams({
+          code, client_id: clientId, client_secret: clientSecret,
+          redirect_uri: redirectUri, grant_type: "authorization_code",
+        });
+
+        const tokenRes = await fetch("https://api.upstox.com/v2/login/authorization/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json" },
+          body: formData.toString(),
+        });
+
+        const tokenData = await tokenRes.json();
+        console.log(`[Callback] Token exchange status=${tokenRes.status} token=${tokenData?.access_token ? "YES" : "NO"}`);
+
+        if (tokenRes.ok && tokenData?.access_token) {
+          // Redirect to frontend with token in URL fragment (never in query — security)
+          const token = encodeURIComponent(tokenData.access_token);
+          const refresh = encodeURIComponent(tokenData.refresh_token || "");
+          res.writeHead(302, {
+            Location: `${frontendUrl}/dashboard?upstox_token=${token}&upstox_refresh=${refresh}&upstox_connected=1`
+          });
+        } else {
+          const errMsg = encodeURIComponent(JSON.stringify(tokenData));
+          res.writeHead(302, { Location: `${frontendUrl}/dashboard?upstox_error=${errMsg}` });
+        }
+      } catch(e) {
+        console.error("[Callback] Error:", e.message);
+        res.writeHead(302, { Location: `${frontendUrl}/dashboard?upstox_error=${encodeURIComponent(e.message)}` });
+      }
+      res.end(); return;
+    }
+
     if (req.method === "POST" && url.pathname === "/auth/exchange") {
       const body = await readBody(req);
       try {

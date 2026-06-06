@@ -40,7 +40,27 @@ export default function Dashboard() {
   const [curTf,  setCurTf]  = useState('5')
   const { data, ai, loading, error, analyze } = useAnalysis()
 
-  useEffect(() => { analyze('NIFTY','5','tech') }, [])
+  // Read Upstox token from URL after OAuth redirect
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const token   = params.get('upstox_token')
+    const refresh = params.get('upstox_refresh')
+    const err     = params.get('upstox_error')
+
+    if (token) {
+      localStorage.setItem('upstox_access_token', token)
+      if (refresh) localStorage.setItem('upstox_refresh_token', refresh)
+      localStorage.setItem('upstox_token_ts', Date.now().toString())
+      // Clean URL
+      window.history.replaceState({}, '', '/dashboard')
+      console.log('✅ Upstox token saved!')
+    }
+    if (err) {
+      console.error('Upstox OAuth error:', decodeURIComponent(err))
+      window.history.replaceState({}, '', '/dashboard')
+    }
+    analyze('NIFTY','5','tech')
+  }, [])
 
   function changeTab(t) {
     setTab(t)
