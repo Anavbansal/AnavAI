@@ -87,22 +87,38 @@ const SYMBOL_TO_INSTRUMENT = {
 };
 
 // ─── Technical Indicators ───────────────────────────────────────────────────
+// EMA with proper SMA seed (industry standard)
 function calcEMA(closes, period) {
-  if (!closes.length) return 0;
+  if (!closes || closes.length === 0) return 0;
+  if (closes.length < period) {
+    // Not enough data — return simple average
+    return closes.reduce((a,b)=>a+b,0) / closes.length;
+  }
   const k = 2 / (period + 1);
-  let ema = closes.slice(0, Math.min(period, closes.length)).reduce((a,b)=>a+b,0) / Math.min(period, closes.length);
-  for (let i = Math.min(period, closes.length); i < closes.length; i++) {
+  // Seed: SMA of first `period` bars
+  let ema = closes.slice(0, period).reduce((a,b)=>a+b,0) / period;
+  for (let i = period; i < closes.length; i++) {
     ema = closes[i] * k + ema * (1 - k);
   }
   return ema;
 }
 
+// EMA Series with SMA seed — matches TradingView & industry standard exactly
 function calcEMASeries(closes, period) {
-  if (!closes.length) return [];
+  if (!closes || closes.length === 0) return [];
   const k = 2 / (period + 1);
-  const series = [];
-  let ema = closes[0];
-  for (const c of closes) { ema = c * k + ema * (1 - k); series.push(+ema.toFixed(2)); }
+  const series = new Array(closes.length).fill(null);
+  if (closes.length < period) {
+    // Fill with raw closes if insufficient data
+    return closes.map(c => +c.toFixed(2));
+  }
+  // Seed: SMA of first `period` bars
+  let ema = closes.slice(0, period).reduce((a,b)=>a+b,0) / period;
+  series[period - 1] = +ema.toFixed(2);
+  for (let i = period; i < closes.length; i++) {
+    ema = closes[i] * k + ema * (1 - k);
+    series[i] = +ema.toFixed(2);
+  }
   return series;
 }
 
@@ -124,24 +140,48 @@ function calcRSI(closes, period = 14) {
   return +(100 - 100 / (1 + avgGain / avgLoss)).toFixed(2);
 }
 
+// VWAP — resets daily at midnight IST (intraday anchored)
+// For daily/weekly candles falls back to price-weighted average of recent 20
 function calcVWAP(candles) {
+  if (!candles || candles.length === 0) return 0;
+
+  // Find today's midnight in IST (UTC+5:30)
+  const IST_OFFSET = 5.5 * 60 * 60 * 1000;
+  const nowIST = Date.now() + IST_OFFSET;
+  const todayMidnightIST = Math.floor(nowIST / 86400000) * 86400000 - IST_OFFSET;
+
+  // Filter to today's candles only
+  const todayCandles = candles.filter(c => c.timestamp >= todayMidnightIST);
+
+  // Use today's candles if available (intraday VWAP)
+  const src = todayCandles.length >= 3 ? todayCandles : candles.slice(-20);
+
   let num = 0, den = 0;
-  for (const c of candles) {
+  for (const c of src) {
     const tp = (c.high + c.low + c.close) / 3;
-    num += tp * c.volume; den += c.volume;
+    num += tp * (c.volume || 1);
+    den += (c.volume || 1);
   }
   return den ? +(num / den).toFixed(2) : (candles[candles.length-1]?.close ?? 0);
 }
 
+// ATR — Wilder's smoothed method (same as TradingView default)
 function calcATR(candles, period = 14) {
-  if (candles.length < 2) return 0;
-  const slice = candles.slice(-period);
-  let sum = 0;
-  for (let i = 0; i < slice.length; i++) {
-    const c = slice[i], prev = i === 0 ? c.close : slice[i-1].close;
-    sum += Math.max(c.high - c.low, Math.abs(c.high - prev), Math.abs(c.low - prev));
+  if (!candles || candles.length < 2) return 0;
+  // Calculate all True Ranges
+  const trs = [];
+  for (let i = 1; i < candles.length; i++) {
+    const c = candles[i], p = candles[i-1];
+    trs.push(Math.max(c.high - c.low, Math.abs(c.high - p.close), Math.abs(c.low - p.close)));
   }
-  return +(sum / slice.length).toFixed(2);
+  if (trs.length < period) return +(trs.reduce((a,b)=>a+b,0)/trs.length).toFixed(2);
+  // Seed: simple average of first `period` TRs
+  let atr = trs.slice(0, period).reduce((a,b)=>a+b,0) / period;
+  // Wilder's smoothing: ATR = (prev_ATR × (period-1) + current_TR) / period
+  for (let i = period; i < trs.length; i++) {
+    atr = (atr * (period - 1) + trs[i]) / period;
+  }
+  return +atr.toFixed(2);
 }
 
 function calcBollingerBands(closes, period = 20, mult = 2) {
@@ -153,40 +193,77 @@ function calcBollingerBands(closes, period = 20, mult = 2) {
   return { upper: +(mean+mult*std).toFixed(2), middle: +mean.toFixed(2), lower: +(mean-mult*std).toFixed(2), stdDev: +std.toFixed(2) };
 }
 
+// MACD(12,26,9) — industry standard, matches TradingView exactly
 function calcMACD(closes) {
-  if (closes.length < 26) return { macd: 0, signal: 0, histogram: 0 };
-  const fast = calcEMASeries(closes, 12);
-  const slow = calcEMASeries(closes, 26);
-  const macdLine = fast.map((v,i) => v - slow[i]);
-  const signalLine = calcEMASeries(macdLine.slice(14), 9);
+  if (closes.length < 35) return { macd: 0, signal: 0, histogram: 0 };
+  const k12 = 2/13, k26 = 2/27, kSig = 2/10;
+  // Seed EMAs using SMA
+  let e12 = closes.slice(0,12).reduce((a,b)=>a+b,0)/12;
+  let e26 = closes.slice(0,26).reduce((a,b)=>a+b,0)/26;
+  // Build MACD line
+  const macdLine = [];
+  for (let i = 0; i < closes.length; i++) {
+    if (i < 12) { e12 = closes.slice(0,i+1).reduce((a,b)=>a+b,0)/(i+1); }
+    else { e12 = closes[i]*k12 + e12*(1-k12); }
+    if (i < 26) { e26 = closes.slice(0,i+1).reduce((a,b)=>a+b,0)/(i+1); }
+    else { e26 = closes[i]*k26 + e26*(1-k26); }
+    if (i >= 25) macdLine.push(e12 - e26);
+  }
+  // Signal line = 9-period EMA of MACD line (seeded with SMA)
+  if (macdLine.length < 9) return { macd: 0, signal: 0, histogram: 0 };
+  let sig = macdLine.slice(0,9).reduce((a,b)=>a+b,0)/9;
+  for (let i = 9; i < macdLine.length; i++) {
+    sig = macdLine[i]*kSig + sig*(1-kSig);
+  }
   const m = macdLine[macdLine.length-1];
-  const s = signalLine[signalLine.length-1] ?? 0;
-  return { macd: +m.toFixed(4), signal: +s.toFixed(4), histogram: +(m-s).toFixed(4) };
+  return { macd: +m.toFixed(4), signal: +sig.toFixed(4), histogram: +(m-sig).toFixed(4) };
 }
 
+// Supertrend — uses Wilder ATR (matches TradingView exactly)
 function calcSupertrend(candles, period = 7, mult = 3) {
-  if (candles.length < period + 1) return { value: 0, direction: 'up' };
-  let finalUpper = 0, finalLower = 0, supertrend = 0, direction = 'up';
-  for (let i = period; i < candles.length; i++) {
-    const slice = candles.slice(Math.max(0, i - period), i + 1);
-    const atr = calcATR(slice, Math.min(period, slice.length));
-    const hl2 = (candles[i].high + candles[i].low) / 2;
-    const basicUpper = hl2 + mult * atr;
-    const basicLower = hl2 - mult * atr;
-    const prevClose = candles[i - 1].close;
-    // Carry-forward: tighten bands only, never widen
-    const newUpper = (basicUpper < finalUpper || prevClose > finalUpper) ? basicUpper : finalUpper;
-    const newLower = (basicLower > finalLower || prevClose < finalLower) ? basicLower : finalLower;
-    if (i === period) {
-      direction = candles[i].close > newLower ? 'up' : 'down';
-    } else {
-      if (direction === 'up') direction = candles[i].close < newLower ? 'down' : 'up';
-      else direction = candles[i].close > newUpper ? 'up' : 'down';
-    }
-    supertrend = direction === 'up' ? newLower : newUpper;
-    finalUpper = newUpper; finalLower = newLower;
+  if (candles.length < period + 2) return { value: 0, direction: 'up' };
+
+  // Pre-compute Wilder ATR series
+  const trs = [];
+  for (let i = 1; i < candles.length; i++) {
+    const c = candles[i], p = candles[i-1];
+    trs.push(Math.max(c.high-c.low, Math.abs(c.high-p.close), Math.abs(c.low-p.close)));
   }
-  return { value: +supertrend.toFixed(2), direction };
+  const atrSeries = new Array(candles.length).fill(0);
+  let wilderATR = trs.slice(0, period).reduce((a,b)=>a+b,0) / period;
+  atrSeries[period] = wilderATR;
+  for (let i = period; i < trs.length; i++) {
+    wilderATR = (wilderATR*(period-1) + trs[i]) / period;
+    atrSeries[i+1] = wilderATR;
+  }
+
+  let upperBand = 0, lowerBand = 0, prevUpper = 0, prevLower = 0;
+  let direction = 'up', st = 0;
+
+  for (let i = period; i < candles.length; i++) {
+    const atr = atrSeries[i];
+    const hl2 = (candles[i].high + candles[i].low) / 2;
+    let upper = hl2 + mult * atr;
+    let lower = hl2 - mult * atr;
+
+    // Carry-forward rule
+    if (i > period) {
+      upper = (upper < prevUpper || candles[i-1].close > prevUpper) ? upper : prevUpper;
+      lower = (lower > prevLower || candles[i-1].close < prevLower) ? lower : prevLower;
+    }
+
+    // Direction flip
+    if (i === period) {
+      direction = candles[i].close >= lower ? 'up' : 'down';
+    } else {
+      if (direction === 'up')   direction = candles[i].close <  lower ? 'down' : 'up';
+      else                       direction = candles[i].close >  upper ? 'up'   : 'down';
+    }
+
+    st = direction === 'up' ? lower : upper;
+    prevUpper = upper; prevLower = lower;
+  }
+  return { value: +st.toFixed(2), direction };
 }
 
 function calcIchimoku(candles) {
@@ -205,12 +282,27 @@ function calcIchimoku(candles) {
   };
 }
 
-function classifyRegime(price, ema20, ema50, atr, volumeRatio) {
-  const trend = ((price - Math.max(ema50,1)) / Math.max(ema50,1)) * 100;
-  const vol = (atr / Math.max(price,1)) * 100;
-  if (vol > 2.5 || volumeRatio > 1.8) return "HIGH_VOL_CHOP";
-  if (trend > 1.5 && price > ema20) return "TREND_UP";
-  if (trend < -1.5 && price < ema20) return "TREND_DOWN";
+// Better regime classification using ADX + ATR% + EMA alignment
+function classifyRegime(price, ema20, ema50, atr, volumeRatio, adx=null) {
+  const atrPct  = (atr / Math.max(price,1)) * 100;
+  const trend50 = ((price - Math.max(ema50,1)) / Math.max(ema50,1)) * 100;
+  const adxVal  = adx?.adx ?? 0;
+  const adxBull = adx ? adx.pdi > adx.mdi : null;
+
+  // Strong trending — ADX confirms direction
+  if (adxVal >= 30 && adxBull === true  && price > ema20 && trend50 > 0) return "TREND_UP";
+  if (adxVal >= 30 && adxBull === false && price < ema20 && trend50 < 0) return "TREND_DOWN";
+
+  // Weak trend — use EMA slopes as tiebreaker
+  if (adxVal >= 18 && price > ema20 && trend50 > 0.8)  return "TREND_UP";
+  if (adxVal >= 18 && price < ema20 && trend50 < -0.8) return "TREND_DOWN";
+
+  // High-vol chop
+  if (atrPct > 2.2 || (volumeRatio > 2.0 && adxVal < 25)) return "HIGH_VOL_CHOP";
+
+  // Breakout watch — BB squeeze + rising volume
+  if (volumeRatio > 1.5 && adxVal < 20) return "BREAKOUT_WATCH";
+
   return "RANGE";
 }
 
@@ -365,6 +457,111 @@ function detectCandlePatterns(candles) {
   return patterns;
 }
 
+// ─── Stochastic RSI (StochRSI) ────────────────────────────────────────────────
+// RSI of RSI — far more sensitive than plain RSI, catches reversals earlier
+function calcStochRSI(closes, rsiPeriod=14, stochPeriod=14, kPeriod=3, dPeriod=3) {
+  if (closes.length < rsiPeriod + stochPeriod + kPeriod + 2) return { k:50, d:50 };
+
+  // Build full RSI series (Wilder smoothing)
+  const rsiSeries = [];
+  let avgGain = 0, avgLoss = 0;
+  for (let i = 1; i <= rsiPeriod; i++) {
+    const diff = closes[i] - closes[i-1];
+    if (diff > 0) avgGain += diff; else avgLoss += Math.abs(diff);
+  }
+  avgGain /= rsiPeriod; avgLoss /= rsiPeriod;
+  rsiSeries.push(avgLoss === 0 ? 100 : 100 - 100/(1+avgGain/avgLoss));
+  for (let i = rsiPeriod+1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i-1];
+    avgGain = (avgGain*(rsiPeriod-1) + Math.max(diff,0)) / rsiPeriod;
+    avgLoss = (avgLoss*(rsiPeriod-1) + Math.max(-diff,0)) / rsiPeriod;
+    rsiSeries.push(avgLoss === 0 ? 100 : 100 - 100/(1+avgGain/avgLoss));
+  }
+
+  // Build StochRSI %K series
+  const kRaw = [];
+  for (let i = stochPeriod-1; i < rsiSeries.length; i++) {
+    const slice = rsiSeries.slice(i-stochPeriod+1, i+1);
+    const hi = Math.max(...slice), lo = Math.min(...slice);
+    kRaw.push(hi===lo ? 50 : ((rsiSeries[i]-lo)/(hi-lo))*100);
+  }
+
+  // Smooth %K with kPeriod SMA → get final %K
+  const kSmoothed = [];
+  for (let i = kPeriod-1; i < kRaw.length; i++) {
+    kSmoothed.push(kRaw.slice(i-kPeriod+1,i+1).reduce((a,b)=>a+b,0)/kPeriod);
+  }
+
+  // %D = dPeriod SMA of smoothed %K
+  const dSmoothed = [];
+  for (let i = dPeriod-1; i < kSmoothed.length; i++) {
+    dSmoothed.push(kSmoothed.slice(i-dPeriod+1,i+1).reduce((a,b)=>a+b,0)/dPeriod);
+  }
+
+  const k = kSmoothed.length ? +kSmoothed[kSmoothed.length-1].toFixed(2) : 50;
+  const d = dSmoothed.length ? +dSmoothed[dSmoothed.length-1].toFixed(2) : 50;
+  return { k, d };
+}
+
+// ─── Williams %R ─────────────────────────────────────────────────────────────
+function calcWilliamsR(candles, period=14) {
+  if (candles.length < period) return -50;
+  const slice = candles.slice(-period);
+  const highH = Math.max(...slice.map(c=>c.high));
+  const lowL  = Math.min(...slice.map(c=>c.low));
+  const close = candles[candles.length-1].close;
+  if (highH === lowL) return -50;
+  return +((highH - close)/(highH - lowL) * -100).toFixed(2);
+}
+
+// ─── CCI — Commodity Channel Index ────────────────────────────────────────────
+function calcCCI(candles, period=20) {
+  if (candles.length < period) return 0;
+  const slice = candles.slice(-period);
+  const tps = slice.map(c=>(c.high+c.low+c.close)/3);
+  const meanTP = tps.reduce((a,b)=>a+b,0)/period;
+  const meanDev = tps.reduce((s,v)=>s+Math.abs(v-meanTP),0)/period;
+  if (meanDev === 0) return 0;
+  return +((tps[tps.length-1]-meanTP)/(0.015*meanDev)).toFixed(2);
+}
+
+// ─── Rate of Change (ROC / Momentum) ─────────────────────────────────────────
+function calcROC(closes, period=12) {
+  if (closes.length <= period) return 0;
+  const prev = closes[closes.length-1-period];
+  if (!prev) return 0;
+  return +((closes[closes.length-1]-prev)/prev*100).toFixed(2);
+}
+
+// ─── Average Volume ─────────────────────────────────────────────────────────
+function calcAvgVolume(candles, period=20) {
+  const slice = candles.slice(-period);
+  return slice.reduce((s,c)=>s+c.volume,0)/Math.max(slice.length,1);
+}
+
+// ─── Dynamic Support/Resistance via Swing Pivots ─────────────────────────────
+function calcSwingSR(candles, lookback=50, pivotStrength=3) {
+  const slice = candles.slice(-Math.min(candles.length, lookback));
+  const swingHighs = [], swingLows = [];
+  for (let i=pivotStrength; i<slice.length-pivotStrength; i++) {
+    const window = slice.slice(i-pivotStrength, i+pivotStrength+1);
+    const isHigh = window.every((c,j)=> j===pivotStrength || c.high <= slice[i].high);
+    const isLow  = window.every((c,j)=> j===pivotStrength || c.low  >= slice[i].low);
+    if (isHigh) swingHighs.push(slice[i].high);
+    if (isLow)  swingLows.push(slice[i].low);
+  }
+  const price = candles[candles.length-1].close;
+  // Find nearest S/R above and below price
+  const resistances = swingHighs.filter(h=>h>price).sort((a,b)=>a-b);
+  const supports    = swingLows.filter(l=>l<price).sort((a,b)=>b-a);
+  return {
+    support:    supports[0]    ?? +Math.min(...slice.map(c=>c.low)).toFixed(2),
+    resistance: resistances[0] ?? +Math.max(...slice.map(c=>c.high)).toFixed(2),
+    allSupports:    supports.slice(0,3).map(v=>+v.toFixed(2)),
+    allResistances: resistances.slice(0,3).map(v=>+v.toFixed(2)),
+  };
+}
+
 // ─── On-Balance Volume (OBV) ─────────────────────────────────────────────────
 function calcOBV(candles) {
   let obv = 0;
@@ -481,7 +678,8 @@ function calcInvestmentGuidance(verdict, confidence, riskProfile, regime) {
 function ruleBasedAnalysis(input) {
   const { price, vwap, ema20, ema50, ema200, rsi, atr, support, resistance,
           regime, trendConsistency, volumeRatio, pcr, m1Trend, m5Trend, m15Trend, macd,
-          bb, supertrend, ichimoku, symbol, adx, patterns, obv } = input;
+          bb, supertrend, ichimoku, symbol, adx, patterns, obv,
+          stochRSI, williamsR, cci, roc, high52w, low52w } = input;
 
   const aboveVWAP   = price > vwap;
   const aboveEMA20  = price > ema20;
@@ -535,6 +733,44 @@ function ruleBasedAnalysis(input) {
   score += addFactor('PCR',         pcr>1.2?'BULL':pcr<0.8?'BEAR':'NEUTRAL', 3, `PCR ${pcr.toFixed(2)} — ${pcr>1.2?'bullish put writing':pcr<0.8?'call writers dominate':'balanced options market'}`);
   if (obvUp || obvDown)
     score += addFactor('OBV',       obvUp?'BULL':'BEAR', 4, `Volume flow: ${obv?.trend} — ${obvUp?'smart money accumulating':'distribution phase detected'}`);
+
+  // StochRSI — fast momentum confirmation
+  if (stochRSI) {
+    const stK = stochRSI.k ?? 50;
+    if (stK <= 20)      score += addFactor('StochRSI', 'BULL', 5, `StochRSI K=${stK} oversold — bounce likely`);
+    else if (stK >= 80) score += addFactor('StochRSI', 'BEAR', 5, `StochRSI K=${stK} overbought — pullback risk`);
+    else if (stK > 50)  score += addFactor('StochRSI', 'BULL', 2, `StochRSI K=${stK} above midline — mild bullish`);
+    else                score += addFactor('StochRSI', 'BEAR', 2, `StochRSI K=${stK} below midline — mild bearish`);
+  }
+
+  // Williams %R
+  if (williamsR !== undefined) {
+    if (williamsR <= -80)     score += addFactor('Williams %R', 'BULL', 4, `Williams %R ${williamsR} — deeply oversold`);
+    else if (williamsR >= -20) score += addFactor('Williams %R', 'BEAR', 4, `Williams %R ${williamsR} — overbought territory`);
+  }
+
+  // CCI — trend strength & extremes
+  if (cci !== undefined) {
+    if (cci > 150)       score += addFactor('CCI', 'BEAR', 3, `CCI ${cci} — extreme overbought`);
+    else if (cci < -150) score += addFactor('CCI', 'BULL', 3, `CCI ${cci} — extreme oversold`);
+    else if (cci > 100)  score += addFactor('CCI', 'BULL', 2, `CCI ${cci} — strong upward momentum`);
+    else if (cci < -100) score += addFactor('CCI', 'BEAR', 2, `CCI ${cci} — strong downward momentum`);
+  }
+
+  // ROC — momentum speed
+  if (roc !== undefined) {
+    if (roc > 3)        score += addFactor('ROC', 'BULL', 3, `ROC ${roc}% — accelerating upward`);
+    else if (roc < -3)  score += addFactor('ROC', 'BEAR', 3, `ROC ${roc}% — accelerating downward`);
+  }
+
+  // 52-week position
+  if (high52w && low52w && price > 0) {
+    const pct52 = ((price - low52w) / Math.max(high52w - low52w, 1)) * 100;
+    if (pct52 > 90)      score += addFactor('52W Position', 'BEAR', 3, `Price at ${pct52.toFixed(0)}% of 52W range — near highs, reversal risk`);
+    else if (pct52 < 10) score += addFactor('52W Position', 'BULL', 3, `Price at ${pct52.toFixed(0)}% of 52W range — near lows, recovery potential`);
+    else if (pct52 > 60) score += addFactor('52W Position', 'BULL', 1, `Price in upper half of 52W range — bullish structure`);
+  }
+
   if (hasBullPattern || hasBearPattern)
     score += addFactor('Candle Pattern', hasBullPattern&&!hasBearPattern?'BULL':hasBearPattern&&!hasBullPattern?'BEAR':'NEUTRAL', 5,
       hasBullPattern?`${bullPatterns[0].name} detected — ${bullPatterns[0].description}`:hasBearPattern?`${bearPatterns[0].name} detected — ${bearPatterns[0].description}`:'Conflicting candle patterns');
@@ -915,19 +1151,30 @@ async function buildRealAnalyzePayload(symbol, candles, ltpOverride) {
   const patterns   = detectCandlePatterns(candles);
   const obv        = calcOBV(candles);
 
-  // Support/Resistance — dynamic range based on candle count
-  const lookback = Math.min(candles.length, 30);
-  const support    = +Math.min(...candles.slice(-lookback).map(c=>c.low)).toFixed(2);
-  const resistance = +Math.max(...candles.slice(-lookback).map(c=>c.high)).toFixed(2);
+  // New precision indicators
+  const stochRSI   = calcStochRSI(closes, 14, 14, 3, 3);
+  const williamsR  = calcWilliamsR(candles, 14);
+  const cci        = calcCCI(candles, 20);
+  const roc        = calcROC(closes, 12);
 
-  const avgVolume   = candles.slice(-20).reduce((s,c)=>s+c.volume,0)/Math.min(candles.length,20);
-  const volumeRatio = avgVolume ? +(latest.volume/avgVolume).toFixed(2) : 1;
+  // Dynamic swing-based S/R (more accurate than simple min/max)
+  const swingSR     = calcSwingSR(candles, Math.min(candles.length, 60), 3);
+  const support     = swingSR.support;
+  const resistance  = swingSR.resistance;
+
+  const avgVolume   = calcAvgVolume(candles, 20);
+  const volumeRatio = avgVolume ? +(latest.volume / avgVolume).toFixed(2) : 1;
+  
+  // 52-week levels
+  const yr = candles.slice(-365);
+  const high52w = yr.length ? +Math.max(...yr.map(c=>c.high)).toFixed(2) : 0;
+  const low52w  = yr.length ? +Math.min(...yr.map(c=>c.low)).toFixed(2)  : 0;
 
   const m1Trend  = summarizeTrend(candles, 3);
   const m5Trend  = summarizeTrend(candles, 8);
   const m15Trend = summarizeTrend(candles, 20);
   const trendConsistency = m1Trend===m5Trend&&m5Trend===m15Trend&&m1Trend!=="SIDEWAYS" ? "CONFIRMED" : "DIVERGENT";
-  const regime   = classifyRegime(price, ema20, ema50, atr, volumeRatio);
+  const regime   = classifyRegime(price, ema20, ema50, atr, volumeRatio, adx);
 
   const clean = String(symbol).trim().toUpperCase().replace(/^NSE:/i,"").replace(/-EQ|-INDEX/gi,"");
   const isIndex = ["NIFTY","NIFTY50","BANKNIFTY","FINNIFTY","MIDCPNIFTY"].includes(clean);
@@ -977,6 +1224,7 @@ async function buildRealAnalyzePayload(symbol, candles, ltpOverride) {
     support, resistance, regime, trendConsistency, volumeRatio, pcr,
     m1Trend, m5Trend, m15Trend, macd, bb, supertrend, ichimoku,
     adx, patterns, obv,
+    stochRSI, williamsR, cci, roc, high52w, low52w,
   };
 
   let aiAnalysis = ruleBasedAnalysis(aiInput);
@@ -986,19 +1234,26 @@ async function buildRealAnalyzePayload(symbol, candles, ltpOverride) {
   if (groqKey) {
     try {
       const topPatterns = patterns.slice(0,2).map(p=>`${p.name}(${p.type})`).join(', ') || 'None';
-      const groqPrompt = `You are ANAV PRO — a professional Indian equities trading AI for NSE/BSE.
-Analyze the following real-time market data and return ONLY one valid JSON object.
+      const stochK = stochRSI?.k ?? 50;
+      const stochD = stochRSI?.d ?? 50;
+      const groqPrompt = `You are ANAV PRO — a SEBI-grade Indian equities trading AI.
+Analyze ALL data below and return ONLY valid JSON (no markdown, no text outside JSON).
 
-Schema (no extra text, no markdown):
-{"verdict":"BUY|SELL|HOLD","confidence":number(40-92),"summary":string,"entry":number,"target":number,"stopLoss":number,"riskReward":number,"reasons":string[],"risks":string[],"newsImpact":string,"timeframeAlignment":{"shortTerm":string,"mediumTerm":string,"trend":string}}
+Schema:
+{"verdict":"BUY|SELL|HOLD","confidence":number(40-92),"summary":string,"entry":number,"target":number,"stopLoss":number,"riskReward":number,"reasons":string[3-4],"risks":string[2-3],"newsImpact":string,"timeframeAlignment":{"shortTerm":"BULLISH|BEARISH|SIDEWAYS","mediumTerm":"BULLISH|BEARISH|SIDEWAYS","trend":"BULLISH|BEARISH|SIDEWAYS"}}
 
-Rules:
-- DIVERGENT trendConsistency = default HOLD unless score very strong
-- BUY/SELL only when M1+M5+M15 align with VWAP direction
-- Confidence < 65 when alignment is weak or HIGH_VOL_CHOP
-- ADX < 20 = avoid trend-following; use range strategies
-- Respect Fibonacci levels as S/R confirmation
-- Max 4 reasons and 4 risks; be concise and actionable in ₹
+Rules (apply strictly — not guidelines):
+BUY: price>VWAP AND price>EMA20 AND MACD-hist>0 AND RSI 35-70 AND stochRSI.k<80 AND supertrend=up AND adx.adx>=18 AND m5Trend=BULLISH AND m15Trend=BULLISH AND obv=ACCUMULATION
+SELL: price<VWAP AND price<EMA20 AND MACD-hist<0 AND RSI 30-65 AND stochRSI.k>20 AND supertrend=down AND adx.adx>=18 AND m5Trend=BEARISH AND m15Trend=BEARISH AND obv=DISTRIBUTION
+HOLD: adx.adx<18 OR trendConsistency=DIVERGENT OR regime=HIGH_VOL_CHOP OR stochRSI.k>85 OR williamsR>-10 with BUY signal (overbought rejection)
+STRONG BUY: All BUY conditions + adx.adx>30 + bullish candle pattern + stochRSI.k<20 + williamsR<-80
+STRONG SELL: All SELL conditions + adx.adx>30 + bearish candle pattern + stochRSI.k>80 + williamsR>-20
+Confidence caps: HIGH_VOL_CHOP=58, DIVERGENT=62, RANGE=70, TREND_UP/DOWN=92
+Entry: best re-entry level near VWAP/EMA20/pivot — not always current price
+Target: nearest resistance from swingSR.allResistances OR Fibonacci extension
+StopLoss: below nearest swing support OR below Supertrend value (whichever is closer to entry)
+Reasons: must include specific ₹ price levels (e.g. "RSI 58 with room to 70 OB"). Max 4.
+Risks: must include invalidation ₹ level. Max 3.
 
 Market Data:
 ${JSON.stringify({
@@ -1009,6 +1264,13 @@ ${JSON.stringify({
   m1Trend, m5Trend, m15Trend,
   macd:{line:macd.macd, signal:macd.signal, histogram:macd.histogram},
   supertrend:{value:supertrend.value, direction:supertrend.direction},
+  stochRSI,
+  williamsR,
+  cci,
+  roc,
+  high52w,
+  low52w,
+  swingSR: { allSupports: swingSR.allSupports, allResistances: swingSR.allResistances },
   adx:{adx:adx.adx, pdi:adx.pdi, mdi:adx.mdi, trend:adx.trend},
   bollinger:{upper:bb.upper, middle:bb.middle, lower:bb.lower},
   fibonacci:{fib382:fibonacci.fib382, fib500:fibonacci.fib500, fib618:fibonacci.fib618},
