@@ -9,14 +9,8 @@ const QUICK = [
   {label:'WIPRO',sym:'WIPRO'},{label:'BAJFINANCE',sym:'BAJFINANCE'},
 ]
 
-const TFS = [
-  {l:'1m',v:'1'},{l:'3m',v:'3'},{l:'5m',v:'5'},
-  {l:'15m',v:'15'},{l:'30m',v:'30'},{l:'1H',v:'60'},{l:'D',v:'D'},
-]
-
 export default function SearchBar({ onAnalyze, loading }) {
   const [sym, setSym]   = useState('NIFTY')
-  const [tf, setTf]     = useState('5')
   const [sugg, setSugg] = useState([])
   const [show, setShow] = useState(false)
   const ref = useRef()
@@ -31,7 +25,7 @@ export default function SearchBar({ onAnalyze, loading }) {
     return ()=>{ c=true; clearTimeout(t) }
   },[sym])
 
-  function go(input=sym, t=tf) {
+  function go(input=sym, t='5') {
     const raw=typeof input==='string'?input:(input?.tradingSymbol||input?.symbol||'')
     const clean=raw.trim().toUpperCase()
     if(!clean) return
@@ -93,19 +87,6 @@ export default function SearchBar({ onAnalyze, loading }) {
           )}
         </div>
 
-        {/* Timeframe */}
-        <div style={{display:'flex',gap:3,background:'#111827',borderRadius:8,padding:3,border:'1px solid #1f2d45'}}>
-          {TFS.map(t=>(
-            <button key={t.v} onClick={()=>setTf(t.v)} style={{
-              padding:'4px 10px',borderRadius:6,cursor:'pointer',border:'none',
-              fontFamily:'JetBrains Mono',fontSize:11,fontWeight:600,transition:'all .15s',
-              background:tf===t.v?'#1e2a3d':'transparent',
-              color:tf===t.v?'#f1f5f9':'#64748b',
-              ...(tf===t.v?{border:'1px solid #2a3f5f'}:{}),
-            }}>{t.l}</button>
-          ))}
-        </div>
-
         <button onClick={()=>go()} disabled={loading} className="btn btn-primary" style={{height:44,padding:'0 20px',fontSize:14,whiteSpace:'nowrap'}}>
           {loading
             ? <span style={{display:'flex',alignItems:'center',gap:8}}><div className="animate-spin" style={{width:16,height:16,border:'2px solid #ffffff40',borderTopColor:'#fff',borderRadius:'50%'}}/>Analyzing...</span>
@@ -116,7 +97,7 @@ export default function SearchBar({ onAnalyze, loading }) {
       {/* Quick chips */}
       <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
         {QUICK.map(q=>(
-          <button key={q.sym} onClick={()=>{setSym(q.sym);go(q.sym,tf)}} style={{
+          <button key={q.sym} onClick={()=>{setSym(q.sym);go(q.sym,'5')}} style={{
             padding:'4px 12px',borderRadius:20,cursor:'pointer',
             border:`1px solid ${sym===q.sym?'#6366f1':'#1f2d45'}`,
             background:sym===q.sym?'#6366f115':'#111827',

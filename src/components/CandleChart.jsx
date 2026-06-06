@@ -4,12 +4,17 @@ import { calcEMASeries } from '../utils/indicators'
 
 const G = { green:'#10b981', red:'#ef4444', blue:'#6366f1', yellow:'#f59e0b', purple:'#a78bfa', orange:'#f97316', bg:'#0b0f19', card:'#151c2c', border:'#1f2d45' }
 
-const PERIODS = [
-  {label:'1D', bars:80,  intraday:true},
-  {label:'5D', bars:400, intraday:false},
-  {label:'1M', bars:1200,intraday:false},
-  {label:'3M', bars:90,  daily:true},
-  {label:'1Y', bars:365, daily:true},
+// Timeframe selectors — each one changes the candle resolution
+// bars = how many candles to display; resolution = what to pass to backend
+const TIMEFRAMES = [
+  { label:'1m',  resolution:'1',    bars:120,  showTime:true  },
+  { label:'5m',  resolution:'5',    bars:120,  showTime:true  },
+  { label:'10m', resolution:'10',   bars:120,  showTime:true  },
+  { label:'30m', resolution:'30',   bars:120,  showTime:true  },
+  { label:'1hr', resolution:'60',   bars:100,  showTime:true  },
+  { label:'1D',  resolution:'D',    bars:365,  showTime:false },
+  { label:'1W',  resolution:'W',    bars:104,  showTime:false },
+  { label:'1M',  resolution:'M',    bars:60,   showTime:false },
 ]
 
 function Tooltip_({ active, payload }) {
@@ -46,16 +51,15 @@ const OVERLAYS = [
   {key:'bbu',   label:'BB',      color:'#3b82f6', dash:true},
 ]
 
-export default function CandleChart({ data, ai }) {
-  const [pi, setPi] = useState(0)
+export default function CandleChart({ data, ai, onTfChange }) {
+  const [tfi, setTfi] = useState(1) // default 5m
   const [active, setActive] = useState({ema20:true, vwap:true})
-  const p = PERIODS[pi]
+  const tf = TIMEFRAMES[tfi]
 
   const { chart } = useMemo(()=>{
     if (!data?.candles?.length) return { chart:[] }
     const all = data.candles
-    const isDaily = p.daily
-    const slice = isDaily ? all.slice(-p.bars) : all.slice(-p.bars)
+    const slice = all.slice(-tf.bars)
     const closes = all.map(c=>c.close)
     const e9   = calcEMASeries(closes,9)
     const e20  = calcEMASeries(closes,20)
@@ -76,7 +80,7 @@ export default function CandleChart({ data, ai }) {
       const bull=c.close>=c.open
       return {
         ...c,
-        label: p.intraday
+        label: tf.showTime
           ? ts.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})
           : ts.toLocaleDateString('en-IN',{day:'2-digit',month:'short'}),
         bullBody: bull?Math.abs(c.close-c.open):0,
@@ -92,7 +96,7 @@ export default function CandleChart({ data, ai }) {
       }
     })
     return { chart }
-  },[data, pi])
+  },[data, tfi])
 
   if (!data) return (
     <div className="card" style={{height:420,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:12}}>
@@ -131,13 +135,19 @@ export default function CandleChart({ data, ai }) {
           )}
         </div>
 
-        {/* Period selectors */}
-        <div style={{display:'flex',gap:4,marginLeft:'auto'}}>
-          {PERIODS.map((pp,i)=>(
-            <button key={pp.label} onClick={()=>setPi(i)} className="tab-btn" style={{
-              fontSize:11,padding:'3px 10px',
-              ...(pi===i?{background:'#1e2a3d',color:'#f1f5f9',border:'1px solid #2a3f5f'}:{})
-            }}>{pp.label}</button>
+        {/* Timeframe selectors */}
+        <div style={{display:'flex',gap:3,marginLeft:'auto',background:'#111827',borderRadius:8,padding:3,border:'1px solid #1f2d45'}}>
+          {TIMEFRAMES.map((t,i)=>(
+            <button key={t.label} onClick={()=>{
+              setTfi(i);
+              if(onTfChange) onTfChange(t.resolution);
+            }} style={{
+              padding:'3px 9px',borderRadius:5,cursor:'pointer',border:'none',
+              fontFamily:'JetBrains Mono',fontSize:11,fontWeight:600,transition:'all .15s',
+              background:tfi===i?'#1e2a3d':'transparent',
+              color:tfi===i?'#f1f5f9':'#64748b',
+              ...(tfi===i?{border:'1px solid #2a3f5f'}:{}),
+            }}>{t.label}</button>
           ))}
         </div>
 

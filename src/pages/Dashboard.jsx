@@ -49,6 +49,13 @@ export default function Dashboard() {
     analyze(sym, tab==='delivery'?'D':tf, mode)
   }
 
+  function handleTfChange(resolution) {
+    setCurTf(resolution)
+    const mode = TAB_MODE[tab] || 'tech'
+    // Re-analyze with new timeframe resolution
+    if (curSym) analyze(curSym, resolution, mode)
+  }
+
   function handleSelectSymbol(s) {
     setSymbol(s); setCurSym(s)
     analyze(s,'5','tech')
@@ -100,7 +107,7 @@ export default function Dashboard() {
           <div style={{display:'flex',flexDirection:'column',gap:14}}>
             <div style={{display:'grid',gap:14,gridTemplateColumns:'320px 1fr'}}>
               <PricePanel data={data} ai={ai} loading={loading}/>
-              <CandleChart data={data} ai={ai}/>
+              <CandleChart data={data} ai={ai} onTfChange={handleTfChange}/>
             </div>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
               <AIInsights ai={ai} data={data} loading={loading}/>
@@ -115,7 +122,7 @@ export default function Dashboard() {
           <div style={{display:'grid',gridTemplateColumns:'360px 1fr',gap:14}}>
             <Intraday data={data} ai={ai}/>
             <div style={{display:'flex',flexDirection:'column',gap:14}}>
-              <CandleChart data={data} ai={ai}/>
+              <CandleChart data={data} ai={ai} onTfChange={handleTfChange}/>
               <AIInsights ai={ai} data={data} loading={loading}/>
             </div>
           </div>
@@ -126,7 +133,7 @@ export default function Dashboard() {
           <div style={{display:'grid',gridTemplateColumns:'360px 1fr',gap:14}}>
             <Delivery data={data} ai={ai}/>
             <div style={{display:'flex',flexDirection:'column',gap:14}}>
-              <CandleChart data={data} ai={ai}/>
+              <CandleChart data={data} ai={ai} onTfChange={handleTfChange}/>
               <NewsPanel symbol={symbol} instrumentKey={instKey} news={data?.latestNews}/>
             </div>
           </div>
