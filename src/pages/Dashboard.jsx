@@ -64,6 +64,8 @@ export default function Dashboard() {
   const [curTf,  setCurTf]  = useState('5')
   const [curTfi, setCurTfi] = useState(1) // index in TIMEFRAMES array
   const { data, ai, loading, error, analyze } = useAnalysis()
+  // Live WebSocket price for current symbol
+  const { priceData: livePriceData, connected: wsConnected } = useLivePrice(sym)
   const isMobile = useIsMobile()
   const [moreOpen, setMoreOpen] = useState(false)
 
