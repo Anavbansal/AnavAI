@@ -16,6 +16,154 @@ const STOCK_QUICK = [
   'BANKNIFTY F&O strategy kya hogi?', 'SBIN delivery trade setup?',
 ]
 
+
+function DraggableFAB({ open, setOpen, unread }) {
+  const [pos, setPos] = React.useState({ x: null, y: null })
+  const [dragging, setDragging] = React.useState(false)
+  const [hasDragged, setHasDragged] = React.useState(false)
+  const startRef = React.useRef(null)
+  const fabRef = React.useRef(null)
+  const SIZE = 56
+
+  // Default position
+  const defaultPos = () => ({
+    x: window.innerWidth - SIZE - 16,
+    y: window.innerHeight - SIZE - 80,
+  })
+
+  React.useEffect(() => {
+    const saved = localStorage.getItem('fab-pos')
+    if (saved) {
+      try { setPos(JSON.parse(saved)) } catch { setPos(defaultPos()) }
+    } else {
+      setPos(defaultPos())
+    }
+  }, [])
+
+  // Save position when drag ends
+  function savePos(p) {
+    localStorage.setItem('fab-pos', JSON.stringify(p))
+  }
+
+  // Touch drag
+  function onTouchStart(e) {
+    const t = e.touches[0]
+    startRef.current = {
+      touchX: t.clientX, touchY: t.clientY,
+      posX: pos.x, posY: pos.y,
+      time: Date.now(),
+    }
+    setDragging(true)
+    setHasDragged(false)
+  }
+
+  function onTouchMove(e) {
+    if (!startRef.current) return
+    e.preventDefault()
+    const t = e.touches[0]
+    const dx = t.clientX - startRef.current.touchX
+    const dy = t.clientY - startRef.current.touchY
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) setHasDragged(true)
+    const newX = Math.max(0, Math.min(window.innerWidth - SIZE, startRef.current.posX + dx))
+    const newY = Math.max(0, Math.min(window.innerHeight - SIZE - 70, startRef.current.posY + dy))
+    setPos({ x: newX, y: newY })
+  }
+
+  function onTouchEnd() {
+    setDragging(false)
+    if (pos.x !== null) savePos(pos)
+    // Only toggle if it was a tap, not a drag
+    setTimeout(() => { if (!hasDragged) setOpen(o => !o) }, 10)
+    startRef.current = null
+  }
+
+  // Mouse drag (desktop)
+  function onMouseDown(e) {
+    startRef.current = {
+      mouseX: e.clientX, mouseY: e.clientY,
+      posX: pos.x, posY: pos.y,
+      time: Date.now(),
+    }
+    setDragging(true)
+    setHasDragged(false)
+    e.preventDefault()
+  }
+
+  React.useEffect(() => {
+    function onMouseMove(e) {
+      if (!startRef.current || !dragging) return
+      const dx = e.clientX - startRef.current.mouseX
+      const dy = e.clientY - startRef.current.mouseY
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) setHasDragged(true)
+      const newX = Math.max(0, Math.min(window.innerWidth - SIZE, startRef.current.posX + dx))
+      const newY = Math.max(0, Math.min(window.innerHeight - SIZE - 70, startRef.current.posY + dy))
+      setPos({ x: newX, y: newY })
+    }
+    function onMouseUp() {
+      if (!dragging) return
+      setDragging(false)
+      if (pos.x !== null) savePos(pos)
+      if (!hasDragged) setOpen(o => !o)
+      startRef.current = null
+    }
+    if (dragging) {
+      window.addEventListener('mousemove', onMouseMove)
+      window.addEventListener('mouseup', onMouseUp)
+    }
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [dragging, hasDragged, pos])
+
+  if (pos.x === null) return null
+
+  return (
+    <div
+      ref={fabRef}
+      onMouseDown={onMouseDown}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+      className="ai-fab"
+      style={{
+        position: 'fixed',
+        left: pos.x, top: pos.y,
+        zIndex: 9999,
+        width: SIZE, height: SIZE,
+        borderRadius: '50%',
+        background: 'linear-gradient(135deg,#5865f2,#a78bfa)',
+        border: 'none',
+        cursor: dragging ? 'grabbing' : 'grab',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 24,
+        boxShadow: dragging ? '0 12px 40px #5865f299' : '0 4px 24px #5865f266',
+        transition: dragging ? 'none' : 'box-shadow .2s',
+        userSelect: 'none', touchAction: 'none',
+        WebkitUserSelect: 'none',
+      }}
+    >
+      {open ? '✕' : '🤖'}
+      {!open && unread > 0 && (
+        <div style={{
+          position:'absolute', top:-3, right:-3, width:18, height:18,
+          borderRadius:'50%', background:'var(--red)', color:'#fff',
+          fontSize:10, fontWeight:700, display:'flex', alignItems:'center', justifyContent:'center',
+          pointerEvents:'none',
+        }}>{unread}</div>
+      )}
+      {/* Drag hint — shows briefly */}
+      {!dragging && (
+        <div style={{
+          position:'absolute', bottom:-20, left:'50%', transform:'translateX(-50%)',
+          fontSize:9, color:'#5865f299', whiteSpace:'nowrap',
+          fontFamily:"'DM Mono',monospace", pointerEvents:'none',
+        }}>drag</div>
+      )}
+    </div>
+  )
+}
+
 function TypingDots() {
   return (
     <div style={{ display:'flex', gap:4, padding:'12px 14px', background:'var(--surface2)', border:'1px solid var(--border)', borderRadius:'4px 12px 12px 12px', width:'fit-content' }}>
@@ -154,28 +302,8 @@ export default function AIAssistant({ data, ai }) {
 
   return (
     <>
-      {/* FAB */}
-      <button onClick={()=>setOpen(o=>!o)} style={{
-        position:'fixed', bottom:24, right:24, zIndex:9999,
-        width:56, height:56, borderRadius:'50%',
-        background:'linear-gradient(135deg,#5865f2,#a78bfa)',
-        border:'none', cursor:'pointer',
-        display:'flex', alignItems:'center', justifyContent:'center',
-        fontSize:24, boxShadow:'0 4px 24px #5865f266',
-        transition:'transform .2s, box-shadow .2s',
-      }}
-        onMouseEnter={e=>{e.currentTarget.style.transform='scale(1.1)';e.currentTarget.style.boxShadow='0 8px 32px #5865f288'}}
-        onMouseLeave={e=>{e.currentTarget.style.transform='scale(1)';e.currentTarget.style.boxShadow='0 4px 24px #5865f266'}}>
-        {open ? '✕' : '🤖'}
-        {!open && unread > 0 && (
-          <div style={{
-            position:'absolute', top:-3, right:-3, width:18, height:18,
-            borderRadius:'50%', background:'var(--red)', color:'#fff',
-            fontSize:10, fontWeight:700, display:'flex', alignItems:'center', justifyContent:'center',
-            fontFamily:"'DM Mono',monospace",
-          }}>{unread}</div>
-        )}
-      </button>
+      {/* Draggable FAB */}
+      <DraggableFAB open={open} setOpen={setOpen} unread={unread}/>
 
       {/* Chat panel */}
       {open && (
