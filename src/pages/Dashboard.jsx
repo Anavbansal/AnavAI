@@ -60,8 +60,10 @@ export default function Dashboard() {
   const [sym,    setSym]    = useState('NIFTY')
   const [curSym, setCurSym] = useState('NIFTY')
   const [curTf,  setCurTf]  = useState('5')
+  const [curTfi, setCurTfi] = useState(1) // index in TIMEFRAMES array
   const { data, ai, loading, error, analyze } = useAnalysis()
   const isMobile = useIsMobile()
+  const [moreOpen, setMoreOpen] = useState(false)
 
   // Read Upstox token from URL after OAuth redirect
   useEffect(() => {
@@ -79,7 +81,9 @@ export default function Dashboard() {
     analyze('NIFTY','5','tech')
   }, [])
 
+  // Close more drawer on tab change
   function changeTab(t) {
+    setMoreOpen(false)
     setTab(t)
     if (NO_REFETCH.has(t)) return
     analyze(curSym, t==='delivery'?'D':curTf, MODE[t]||'tech')
@@ -91,13 +95,17 @@ export default function Dashboard() {
     analyze(input, tab==='delivery'?'D':tf, MODE[tab]||'tech')
   }
 
-  function handleTfChange(tf) { setCurTf(tf); analyze(curSym, tf, MODE[tab]||'tech') }
+  function handleTfChange(tf, tfi) {
+    setCurTf(tf)
+    if (tfi !== undefined) setCurTfi(tfi)
+    analyze(curSym, tf, MODE[tab]||'tech')
+  }
   function handleSelectSymbol(s) { setSym(s); setCurSym(s); analyze(s,'5','tech'); setTab('overview'); window.scrollTo({top:0,behavior:'smooth'}) }
 
   const ikey = data?.instrumentKey || ''
   const G = {gap:12}
 
-  const chart = <CandleChart data={data} ai={ai} onTfChange={handleTfChange}/>
+  const chart = <CandleChart data={data} ai={ai} onTfChange={handleTfChange} activeTfi={curTfi}/>
   const insights = <AIInsights ai={ai} data={data} loading={loading}/>
   const news = <NewsPanel symbol={sym} instrumentKey={ikey}/>
 
@@ -232,15 +240,58 @@ export default function Dashboard() {
 
       {/* ── Mobile bottom navigation ── */}
       {isMobile && (
-        <nav className="mobile-nav">
-          {MOBILE_TABS.map(t=>(
-            <button key={t.id} className={`mobile-nav-item ${tab===t.id?'active':''}`}
-              onClick={()=>changeTab(t.id)}>
-              <span className="nav-icon">{t.icon}</span>
-              {t.label}
-            </button>
-          ))}
-        </nav>
+        <>
+          <nav className="mobile-nav">
+            {[
+              {id:'overview',  label:'Home',    icon:'📊'},
+              {id:'intraday',  label:'Intraday',icon:'⚡'},
+              {id:'delivery',  label:'Delivery',icon:'📦'},
+              {id:'fo',        label:'F&O',     icon:'⚙'},
+              {id:'__more__',  label:'More',    icon:'☰'},
+            ].map(t=>(
+              <button key={t.id}
+                className={`mobile-nav-item ${tab===t.id||
+                  (t.id==='__more__'&&['scanner','alerts','calendar','risk','portfolio','mf'].includes(tab))
+                  ?'active':''}`}
+                onClick={()=>{ if(t.id==='__more__') setMoreOpen(o=>!o); else { setMoreOpen(false); changeTab(t.id); } }}>
+                <span className="nav-icon">{t.icon}</span>
+                {t.label}
+              </button>
+            ))}
+          </nav>
+
+          {/* More drawer */}
+          {moreOpen && (
+            <div style={{
+              position:'fixed', bottom:58, left:0, right:0, zIndex:499,
+              background:'var(--bg2)', borderTop:'1px solid var(--border)',
+              padding:'12px 16px', display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8,
+            }}>
+              {[
+                {id:'scanner',  label:'Scanner',    icon:'📡'},
+                {id:'alerts',   label:'Alerts',     icon:'🔔'},
+                {id:'calendar', label:'Calendar',   icon:'📅'},
+                {id:'risk',     label:'Risk Calc',  icon:'🎯'},
+                {id:'portfolio',label:'Portfolio',  icon:'💼'},
+                {id:'mf',       label:'MF',         icon:'🏦'},
+              ].map(t=>(
+                <button key={t.id}
+                  onClick={()=>{ changeTab(t.id); setMoreOpen(false); }}
+                  style={{
+                    padding:'10px 6px', borderRadius:8, border:'1px solid var(--border)',
+                    background: tab===t.id ? '#5865f220' : 'var(--surface)',
+                    color: tab===t.id ? 'var(--accent2)' : 'var(--text2)',
+                    cursor:'pointer', display:'flex', flexDirection:'column',
+                    alignItems:'center', gap:4, fontSize:11, fontWeight:500,
+                    fontFamily:"'DM Sans',sans-serif",
+                  }}>
+                  <span style={{fontSize:20}}>{t.icon}</span>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       <AIAssistant data={data} ai={ai}/>

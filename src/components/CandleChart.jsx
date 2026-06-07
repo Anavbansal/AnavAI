@@ -204,12 +204,14 @@ function VolumeCanvas({ candles, width, height }) {
 }
 
 // ─── Main component ────────────────────────────────────────────────────────────
-export default function CandleChart({ data, ai, onTfChange }) {
+export default function CandleChart({ data, ai, onTfChange, activeTfi }) {
   const [tfi,    setTfi]    = useState(1)
+  // Sync with parent-controlled TF if provided
+  const effectiveTfi = activeTfi !== undefined ? activeTfi : tfi
   const [active, setActive] = useState({ ema20:true, vwap:true })
   const [size,   setSize]   = useState({ w:800, h:320 })
   const containerRef = useRef(null)
-  const tf = TIMEFRAMES[tfi]
+  const tf = TIMEFRAMES[effectiveTfi]
 
   // Responsive width
   useEffect(() => {
@@ -260,7 +262,7 @@ export default function CandleChart({ data, ai, onTfChange }) {
         bb_lower: bbl[gi] ?? null,
       }
     })
-  }, [data, tfi])
+  }, [data, effectiveTfi])
 
   if (!data) return (
     <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:10,
@@ -305,13 +307,13 @@ export default function CandleChart({ data, ai, onTfChange }) {
         {/* Timeframe */}
         <div style={{ display:'flex', gap:2, marginLeft:'auto', background:'#0b0f19', borderRadius:7, padding:3, border:`1px solid ${C.border}` }}>
           {TIMEFRAMES.map((t,i) => (
-            <button key={t.label} onClick={() => { setTfi(i); onTfChange?.(t.res) }}
+            <button key={t.label} onClick={() => { setTfi(i); if(onTfChange) onTfChange(t.res, i); }}
               style={{
                 padding:'3px 9px', borderRadius:5, cursor:'pointer', border:'none',
                 fontFamily:'JetBrains Mono,monospace', fontSize:10, fontWeight:600,
-                background: tfi===i ? '#1e2a3d' : 'transparent',
-                color:      tfi===i ? C.white    : C.dim,
-                outline:    tfi===i ? `1px solid #2a3f5f` : 'none',
+                background: effectiveTfi===i ? '#1e2a3d' : 'transparent',
+                color:      effectiveTfi===i ? C.white    : C.dim,
+                outline:    effectiveTfi===i ? `1px solid #2a3f5f` : 'none',
                 transition:'all .15s',
               }}>{t.label}</button>
           ))}

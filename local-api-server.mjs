@@ -920,22 +920,105 @@ function buildSearchQuery(symbol) {
   return String(symbol || "").trim() || clean;
 }
 
+// Local symbol database for instant search (no token needed)
+const LOCAL_SYMBOLS = [
+  {trading_symbol:"NIFTY",    name:"Nifty 50 Index",         instrument_key:"NSE_INDEX|Nifty 50",        exchange:"NSE",segment:"NSE_INDEX"},
+  {trading_symbol:"BANKNIFTY",name:"Nifty Bank Index",        instrument_key:"NSE_INDEX|Nifty Bank",      exchange:"NSE",segment:"NSE_INDEX"},
+  {trading_symbol:"FINNIFTY", name:"Nifty Financial Services",instrument_key:"NSE_INDEX|Nifty Fin Service",exchange:"NSE",segment:"NSE_INDEX"},
+  {trading_symbol:"SENSEX",   name:"S&P BSE Sensex",         instrument_key:"BSE_INDEX|SENSEX",          exchange:"BSE",segment:"BSE_INDEX"},
+  {trading_symbol:"MIDCPNIFTY",name:"Nifty Midcap Select",   instrument_key:"NSE_INDEX|NIFTY MID SELECT",exchange:"NSE",segment:"NSE_INDEX"},
+  {trading_symbol:"RELIANCE", name:"Reliance Industries Ltd", instrument_key:"NSE_EQ|INE002A01018",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"TCS",      name:"Tata Consultancy Services",instrument_key:"NSE_EQ|INE467B01029",     exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"HDFCBANK", name:"HDFC Bank Ltd",           instrument_key:"NSE_EQ|INE040A01034",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"INFY",     name:"Infosys Ltd",             instrument_key:"NSE_EQ|INE009A01021",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"ICICIBANK",name:"ICICI Bank Ltd",          instrument_key:"NSE_EQ|INE090A01021",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"SBIN",     name:"State Bank of India",     instrument_key:"NSE_EQ|INE062A01020",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"WIPRO",    name:"Wipro Ltd",               instrument_key:"NSE_EQ|INE075A01022",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"BAJFINANCE",name:"Bajaj Finance Ltd",      instrument_key:"NSE_EQ|INE296A01024",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"ADANIENT", name:"Adani Enterprises Ltd",   instrument_key:"NSE_EQ|INE423A01024",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"LT",       name:"Larsen & Toubro Ltd",     instrument_key:"NSE_EQ|INE018A01030",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"AXISBANK", name:"Axis Bank Ltd",           instrument_key:"NSE_EQ|INE238A01034",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"KOTAKBANK",name:"Kotak Mahindra Bank",     instrument_key:"NSE_EQ|INE237A01028",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"MARUTI",   name:"Maruti Suzuki India Ltd", instrument_key:"NSE_EQ|INE585B01010",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"TATAMOTORS",name:"Tata Motors Ltd",        instrument_key:"NSE_EQ|INE155A01022",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"SUNPHARMA",name:"Sun Pharmaceutical Ltd",  instrument_key:"NSE_EQ|INE044A01036",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"HCLTECH",  name:"HCL Technologies Ltd",    instrument_key:"NSE_EQ|INE860A01027",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"ASIANPAINT",name:"Asian Paints Ltd",       instrument_key:"NSE_EQ|INE021A01026",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"HINDUNILVR",name:"Hindustan Unilever Ltd", instrument_key:"NSE_EQ|INE030A01027",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"ITC",      name:"ITC Ltd",                 instrument_key:"NSE_EQ|INE154A01025",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"BHARTIARTL",name:"Bharti Airtel Ltd",      instrument_key:"NSE_EQ|INE397D01024",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"ONGC",     name:"Oil & Natural Gas Corp",  instrument_key:"NSE_EQ|INE213A01029",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"POWERGRID",name:"Power Grid Corp of India",instrument_key:"NSE_EQ|INE752E01010",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"NTPC",     name:"NTPC Ltd",                instrument_key:"NSE_EQ|INE733E01010",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"COALINDIA",name:"Coal India Ltd",          instrument_key:"NSE_EQ|INE522F01014",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"TATASTEEL",name:"Tata Steel Ltd",          instrument_key:"NSE_EQ|INE081A01020",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"JSWSTEEL", name:"JSW Steel Ltd",           instrument_key:"NSE_EQ|INE019A01038",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"HINDALCO", name:"Hindalco Industries Ltd", instrument_key:"NSE_EQ|INE038A01020",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"BAJAJFINSV",name:"Bajaj Finserv Ltd",      instrument_key:"NSE_EQ|INE918I01026",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"TITAN",    name:"Titan Company Ltd",       instrument_key:"NSE_EQ|INE280A01028",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"ULTRACEMCO",name:"UltraTech Cement Ltd",   instrument_key:"NSE_EQ|INE481G01011",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"TECHM",    name:"Tech Mahindra Ltd",       instrument_key:"NSE_EQ|INE669C01036",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"INDUSINDBK",name:"IndusInd Bank Ltd",      instrument_key:"NSE_EQ|INE095A01012",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"DRREDDY",  name:"Dr. Reddy's Laboratories",instrument_key:"NSE_EQ|INE089A01031",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"CIPLA",    name:"Cipla Ltd",               instrument_key:"NSE_EQ|INE059A01026",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"NESTLEIND",name:"Nestle India Ltd",        instrument_key:"NSE_EQ|INE239A01024",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"BRITANNIA",name:"Britannia Industries Ltd",instrument_key:"NSE_EQ|INE216A01030",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"GRASIM",   name:"Grasim Industries Ltd",   instrument_key:"NSE_EQ|INE047A01021",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"APOLLOHOSP",name:"Apollo Hospitals Ltd",   instrument_key:"NSE_EQ|INE437A01024",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"DIVISLAB", name:"Divi's Laboratories Ltd", instrument_key:"NSE_EQ|INE361B01024",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"ADANIPORTS",name:"Adani Ports & SEZ Ltd",  instrument_key:"NSE_EQ|INE742F01042",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"EICHERMOT",name:"Eicher Motors Ltd",       instrument_key:"NSE_EQ|INE066A01021",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"HEROMOTOCO",name:"Hero MotoCorp Ltd",      instrument_key:"NSE_EQ|INE158A01026",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"BPCL",     name:"Bharat Petroleum Corp",   instrument_key:"NSE_EQ|INE029A01011",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"TATAPOWER",name:"Tata Power Company Ltd",  instrument_key:"NSE_EQ|INE245A01021",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"VEDL",     name:"Vedanta Ltd",             instrument_key:"NSE_EQ|INE205A01025",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"IRCTC",    name:"Indian Railway Catering", instrument_key:"NSE_EQ|INE335Y01020",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"ZOMATO",   name:"Zomato Ltd",              instrument_key:"NSE_EQ|INE758T01015",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"PAYTM",    name:"One97 Communications Ltd",instrument_key:"NSE_EQ|INE982J01020",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"NYKAA",    name:"FSN E-Commerce Ventures", instrument_key:"NSE_EQ|INE388Y01029",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"DMART",    name:"Avenue Supermarts Ltd",   instrument_key:"NSE_EQ|INE192R01011",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"PIDILITIND",name:"Pidilite Industries Ltd",instrument_key:"NSE_EQ|INE318A01026",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"HAVELLS",  name:"Havells India Ltd",       instrument_key:"NSE_EQ|INE176B01034",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"DIXON",    name:"Dixon Technologies Ltd",  instrument_key:"NSE_EQ|INE935N01020",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"POLYCAB",  name:"Polycab India Ltd",       instrument_key:"NSE_EQ|INE455K01017",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"TRENT",    name:"Trent Ltd",               instrument_key:"NSE_EQ|INE849A01020",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"LTIM",     name:"LTIMindtree Ltd",         instrument_key:"NSE_EQ|INE214T01019",       exchange:"NSE",segment:"NSE_EQ"},
+  {trading_symbol:"PERSISTENT",name:"Persistent Systems Ltd", instrument_key:"NSE_EQ|INE262H01021",       exchange:"NSE",segment:"NSE_EQ"},
+];
+
+function localSearch(query) {
+  const q = query.toUpperCase().trim();
+  return LOCAL_SYMBOLS.filter(s =>
+    s.trading_symbol.includes(q) ||
+    s.name.toUpperCase().includes(q)
+  ).sort((a,b) => {
+    const aStart = a.trading_symbol.startsWith(q) ? 0 : 1;
+    const bStart = b.trading_symbol.startsWith(q) ? 0 : 1;
+    return aStart - bStart;
+  }).slice(0,10);
+}
+
 async function searchUpstoxInstruments(token, query, options = {}) {
-  try {
-    const results = await UpstoxSDK.searchInstruments(query, {
-      exchanges: options.exchanges || "NSE,BSE",
-      segments: options.segments || "EQ,INDEX",
-      pageNumber: options.pageNumber || 1,
-      records: options.records || 10,
-      instrumentTypes: options.instrumentTypes,
-      expiry: options.expiry,
-      atmOffset: options.atmOffset,
-    }, token);
-    return results;
-  } catch (err) {
-    console.warn("[searchUpstoxInstruments] SDK error:", err.message);
-    return [];
+  // Always try local search first — instant, no token needed
+  const local = localSearch(query);
+
+  // If token available, also try Upstox API for broader results
+  if (token && token.length > 50) {
+    try {
+      const results = await UpstoxSDK.searchInstruments(query, {
+        exchanges: options.exchanges || "NSE,BSE",
+        segments: options.segments || "EQ,INDEX",
+        pageNumber: options.pageNumber || 1,
+        records: options.records || 10,
+        instrumentTypes: options.instrumentTypes,
+      }, token);
+      if (results && results.length > 0) return results;
+    } catch (err) {
+      console.warn("[searchUpstoxInstruments] Upstox API failed, using local:", err.message);
+    }
   }
+
+  return local;
 }
 
 function scoreInstrumentMatch(item, cleanSymbol) {
