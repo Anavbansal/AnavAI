@@ -1,4 +1,5 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
+import { useLivePrice } from '../hooks/useLivePrice'
 
 const f = (n,d=2) => Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:d,maximumFractionDigits:d})
 
@@ -18,6 +19,12 @@ function Ring({ pct, color }) {
 }
 
 export default function PricePanel({ data, ai, loading }) {
+  // Live WebSocket price override
+  const { priceData, connected } = useLivePrice(data?.symbol)
+  const livePrice    = priceData?.price     || data?.price     || 0
+  const liveChange   = priceData?.change    ?? data?.change    ?? 0
+  const liveChangePct= priceData?.changePct ?? data?.changePct ?? 0
+
   if (loading) return (
     <div className="card" style={{display:'flex',alignItems:'center',justifyContent:'center',minHeight:300,gap:12,flexDirection:'column'}}>
       <div className="animate-spin" style={{width:28,height:28,border:'3px solid #1f2d45',borderTopColor:'#6366f1',borderRadius:'50%'}}/>
@@ -58,7 +65,7 @@ export default function PricePanel({ data, ai, loading }) {
       <div style={{padding:'16px 16px 12px',borderBottom:'1px solid #1f2d45',textAlign:'center'}}>
         <div style={{fontSize:12,fontWeight:600,color:'#64748b',letterSpacing:1,marginBottom:4}}>{data.symbol}</div>
         <div style={{fontFamily:'JetBrains Mono',fontSize:32,fontWeight:800,color:pclr,lineHeight:1}}>
-          ₹{f(data.price)}
+          ₹{f(livePrice)}
         </div>
         <div style={{marginTop:6,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
           <span className={`stat-pill ${bull?'up':'down'}`}>

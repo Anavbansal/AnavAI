@@ -30,6 +30,14 @@ const OVERLAYS = [
 
 const CHART_TYPES = ['Candle','Heikin-Ashi','Line','Mountain']
 
+const DRAW_TOOLS = [
+  {id:'none',      icon:'🖱️', label:'Select'},
+  {id:'hline',     icon:'─',  label:'H-Line'},
+  {id:'trendline', icon:'╱',  label:'Trendline'},
+  {id:'rect',      icon:'□',  label:'Rectangle'},
+  {id:'text',      icon:'T',  label:'Text'},
+]
+
 // ── Compute Heikin-Ashi candles ────────────────────────────────────────────────
 function toHeikinAshi(candles) {
   const ha = []
@@ -68,7 +76,7 @@ function calcVolumeProfile(candles, bins=24) {
 
 // ── Canvas renderer ────────────────────────────────────────────────────────────
 function useChart({ candles, overlays, width, height, ai, chartType, showVP,
-                    zoom, pan, crosshair, setCrosshair }) {
+                    zoom, pan, crosshair, setCrosshair, drawings=[] }) {
   const canvasRef = useRef(null)
 
   const draw = useCallback(() => {
@@ -250,6 +258,52 @@ function useChart({ candles, overlays, width, height, ai, chartType, showVP,
       }
     }
 
+    // ── User drawings ──
+    for (const d of drawings) {
+      ctx.save()
+      ctx.strokeStyle = d.color || '#f59e0b'
+      ctx.fillStyle   = d.color || '#f59e0b'
+      ctx.lineWidth   = 1.5
+      ctx.setLineDash([4,2])
+      if (d.type === 'hline') {
+        ctx.beginPath(); ctx.moveTo(pad.left, d.y); ctx.lineTo(width-pad.right, d.y); ctx.stroke()
+        ctx.setLineDash([])
+        ctx.font = '9px JetBrains Mono,monospace'; ctx.textAlign='left'
+        // Show price at this Y
+        const price2 = minP + (1-(d.y-pad.top)/H)*rng
+        ctx.fillText('₹'+Math.round(price2).toLocaleString('en-IN'), width-pad.right+4, d.y-2)
+      } else if (d.type === 'trendline' && d.start && d.end) {
+        ctx.setLineDash([])
+        ctx.beginPath(); ctx.moveTo(d.start.x, d.start.y); ctx.lineTo(d.end.x, d.end.y); ctx.stroke()
+        // Extend line
+        const dx = d.end.x-d.start.x, dy = d.end.y-d.start.y
+        const len = Math.sqrt(dx*dx+dy*dy)||1
+        const ext = 200
+        ctx.globalAlpha = 0.3; ctx.setLineDash([3,3])
+        ctx.beginPath()
+        ctx.moveTo(d.end.x, d.end.y)
+        ctx.lineTo(d.end.x + dx/len*ext, d.end.y + dy/len*ext)
+        ctx.stroke()
+        ctx.globalAlpha = 1; ctx.setLineDash([])
+      } else if (d.type === 'rect' && d.start && d.end) {
+        ctx.setLineDash([])
+        const rx=Math.min(d.start.x,d.end.x), ry=Math.min(d.start.y,d.end.y)
+        const rw=Math.abs(d.end.x-d.start.x), rh=Math.abs(d.end.y-d.start.y)
+        ctx.globalAlpha=0.12; ctx.fillRect(rx,ry,rw,rh)
+        ctx.globalAlpha=1; ctx.strokeRect(rx,ry,rw,rh)
+      } else if (d.type === 'text') {
+        ctx.setLineDash([])
+        ctx.font = 'bold 12px JetBrains Mono,monospace'
+        ctx.textAlign='left'
+        ctx.fillStyle='#0b0f19'
+        const tw = ctx.measureText(d.text).width
+        ctx.fillRect(d.x-2, d.y-13, tw+6, 16)
+        ctx.fillStyle = d.color||'#f59e0b'
+        ctx.fillText(d.text, d.x, d.y)
+      }
+      ctx.restore()
+    }
+
     // ── X-axis labels ──
     ctx.fillStyle='#3a5a7a'; ctx.font='9px JetBrains Mono,monospace'; ctx.textAlign='center'
     const step = Math.max(1, Math.floor(source.length/7))
@@ -257,7 +311,7 @@ function useChart({ candles, overlays, width, height, ai, chartType, showVP,
       if (source[i]) ctx.fillText(source[i].label||'', px(i), height-pad.bottom+14)
     }
 
-  }, [candles, overlays, width, height, ai, chartType, showVP, zoom, pan, crosshair])
+  }, [candles, overlays, width, height, ai, chartType, showVP, zoom, pan, crosshair, drawings])
 
   useEffect(() => { draw() }, [draw])
 
@@ -345,31 +399,67 @@ export default function CandleChart({ data, ai, onTfChange, activeTfi }) {
   },[data, effectiveTfi])
 
   const overlayMap = {ema9:active.ema9,ema20:active.ema20,ema50:active.ema50,ema200:active.ema200,vwap:active.vwap,bb:active.bb}
-  const canvasRef  = useChart({candles,overlays:overlayMap,width:size.w,height:size.h,ai,chartType,showVP,zoom,pan,crosshair,setCrosshair})
+  const allDrawings = drawing ? [...drawings, drawing] : drawings
+  const canvasRef  = useChart({candles,overlays:overlayMap,width:size.w,height:size.h,ai,chartType,showVP,zoom,pan,crosshair,setCrosshair,drawings:allDrawings})
 
-  // Mouse events for crosshair
-  function handleMouseMove(e) {
+  // Canvas coordinate helpers
+  function getCanvasCoord(e) {
     const rect = e.currentTarget.getBoundingClientRect()
-    setCrosshair({ x: e.clientX - rect.left, y: e.clientY - rect.top })
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top }
+  }
+
+  // Crosshair
+  function handleMouseMove(e) {
+    const c = getCanvasCoord(e)
+    setCrosshair(c)
+    // Update in-progress drawing
+    if (drawing && drawTool !== 'none') {
+      setDrawing(d => d ? { ...d, end: c } : null)
+    }
+    // Pan
+    if (dragRef.current && drawTool === 'none') {
+      const dx = e.clientX - dragRef.current.x
+      const barW = size.w / Math.max(10, Math.floor(candles.length/zoom))
+      setPan(p => Math.max(0, Math.min(candles.length-1, dragRef.current.pan - Math.round(dx/barW))))
+    }
   }
   function handleMouseLeave() { setCrosshair({x:-1,y:-1}) }
 
-  // Zoom with mouse wheel
   function handleWheel(e) {
     e.preventDefault()
     setZoom(z => Math.max(1, Math.min(10, z + (e.deltaY > 0 ? -0.2 : 0.2))))
   }
 
-  // Pan with drag
   const dragRef = useRef(null)
-  function handleMouseDown(e) { dragRef.current = {x:e.clientX, pan} }
-  function handleMouseMoveForPan(e) {
-    if (!dragRef.current) return
-    const dx = e.clientX - dragRef.current.x
-    const barW = size.w / Math.max(10, Math.floor(candles.length/zoom))
-    setPan(p => Math.max(0, Math.min(candles.length-1, dragRef.current.pan - Math.round(dx/barW))))
+  function handleMouseDown(e) {
+    const c = getCanvasCoord(e)
+    if (drawTool === 'none') {
+      dragRef.current = {x:e.clientX, pan}
+      return
+    }
+    if (drawTool === 'hline') {
+      // Horizontal line — add immediately
+      setDrawings(d => [...d, { type:'hline', y:c.y, color:'#f59e0b' }])
+      return
+    }
+    if (drawTool === 'text') {
+      const label = prompt('Enter label:')
+      if (label) setDrawings(d => [...d, { type:'text', x:c.x, y:c.y, text:label, color:'#f59e0b' }])
+      return
+    }
+    // Start trendline or rect
+    setDrawing({ type:drawTool, start:c, end:c, color:'#5865f2' })
   }
-  function handleMouseUp() { dragRef.current = null }
+
+  function handleMouseUp(e) {
+    dragRef.current = null
+    if (drawing && drawing.end) {
+      setDrawings(d => [...d, drawing])
+      setDrawing(null)
+    }
+  }
+
+  function handleMouseMoveForPan(e) {} // merged into handleMouseMove
 
   if (!data) return (
     <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,height:360,
@@ -437,6 +527,25 @@ export default function CandleChart({ data, ai, onTfChange, activeTfi }) {
             border:`1px solid ${showVP?'#f59e0b':C.border}`,
             color:showVP?'#f59e0b':C.dim,transition:'all .15s',
           }}>VP</button>
+        </div>
+
+        {/* Drawing tools */}
+        <div style={{display:'flex',gap:2,background:'#0b0f19',borderRadius:6,padding:2,border:`1px solid ${C.border}`}}>
+          {DRAW_TOOLS.map(t=>(
+            <button key={t.id} onClick={()=>setDrawTool(t.id)} title={t.label} style={{
+              padding:'3px 7px',borderRadius:4,border:'none',cursor:'pointer',
+              fontFamily:'JetBrains Mono,monospace',fontSize:11,fontWeight:600,
+              background:drawTool===t.id?'#5865f244':'transparent',
+              color:drawTool===t.id?'#7c8af7':C.dim,
+              outline:drawTool===t.id?`1px solid #5865f2`:'none',
+            }}>{t.icon}</button>
+          ))}
+          {drawings.length>0&&(
+            <button onClick={()=>setDrawings([])} title="Clear all" style={{
+              padding:'3px 7px',borderRadius:4,border:`1px solid #ef444433`,
+              cursor:'pointer',fontSize:10,background:'transparent',color:'#ef4444',
+            }}>✕</button>
+          )}
         </div>
 
         {/* Zoom controls */}

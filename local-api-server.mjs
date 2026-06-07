@@ -1986,22 +1986,48 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // ── /api/optionchain — Real NSE option chain (free, no token) ─────────────
+    // ── /api/optionchain — Real NSE option chain with session cookie ────────────
     if (req.method === "GET" && url.pathname === "/api/optionchain") {
       const symbol = (url.searchParams.get("symbol") || "NIFTY").toUpperCase();
       try {
-        // NSE free API — no auth needed
+        const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
         const headers = {
-          "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-          "Accept":"application/json","Referer":"https://www.nseindia.com",
-          "Accept-Language":"en-US,en;q=0.9",
+          "User-Agent": UA,
+          "Accept": "application/json, text/plain, */*",
+          "Accept-Language": "en-US,en;q=0.9,hi;q=0.8",
+          "Accept-Encoding": "gzip, deflate, br",
+          "Referer": "https://www.nseindia.com/option-chain",
+          "sec-ch-ua": '"Google Chrome";v="125", "Chromium";v="125"',
+          "sec-ch-ua-mobile": "?0",
+          "sec-fetch-dest": "empty",
+          "sec-fetch-mode": "cors",
+          "sec-fetch-site": "same-origin",
+          "Connection": "keep-alive",
         };
-        // First hit homepage to get cookies
-        await fetch("https://www.nseindia.com", { headers }).catch(()=>{});
-        const ocRes = await fetch(
-          `https://www.nseindia.com/api/option-chain-indices?symbol=${symbol}`,
-          { headers, signal: AbortSignal.timeout(8000) }
-        );
+
+        // Step 1: Get NSE session cookies (required)
+        let cookies = "";
+        try {
+          const homeRes = await fetch("https://www.nseindia.com/", {
+            headers: { "User-Agent": UA, "Accept": "text/html" },
+            signal: AbortSignal.timeout(6000),
+          });
+          const setCookie = homeRes.headers.get("set-cookie") || "";
+          cookies = setCookie.split(",").map(c => c.split(";")[0]).join("; ");
+          console.log(`[OC] NSE cookies obtained: ${cookies.slice(0,50)}...`);
+        } catch(e) {
+          console.warn("[OC] NSE homepage failed:", e.message);
+        }
+
+        if (cookies) headers["Cookie"] = cookies;
+
+        // Step 2: Try to get option chain for indices
+        const isIndex = ["NIFTY","BANKNIFTY","FINNIFTY","MIDCPNIFTY"].includes(symbol);
+        const ocUrl = isIndex
+          ? `https://www.nseindia.com/api/option-chain-indices?symbol=${symbol}`
+          : `https://www.nseindia.com/api/option-chain-equities?symbol=${symbol}`;
+
+        const ocRes = await fetch(ocUrl, { headers, signal: AbortSignal.timeout(10000) });
         if (ocRes.ok) {
           const ocData = await ocRes.json();
           const records = ocData?.records?.data || [];

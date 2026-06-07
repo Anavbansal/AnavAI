@@ -1,11 +1,47 @@
-import React, { useMemo, useState } from 'react'
+import React, { useMemo, useState, useEffect } from 'react'
 import { fmt } from '../utils/indicators'
+import { API_BASE_URL } from '../config'
 
 export default function FOGreeks({ data }) {
   const [showAll, setShowAll] = useState(false)
   const [activeTab, setActiveTab] = useState('chain')
+  const [realOC, setRealOC] = useState(null)
+  const [ocLoading, setOcLoading] = useState(false)
+
+  // Fetch real NSE option chain
+  useEffect(() => {
+    if (!data?.symbol) return
+    const sym = data.symbol.replace('NIFTY 50','NIFTY').replace('NIFTY50','NIFTY')
+    setOcLoading(true)
+    const token = localStorage.getItem('upstox_access_token') || ''
+    fetch(`${API_BASE_URL}/api/optionchain?symbol=${sym}`, {
+      headers: token ? { Authorization:`Bearer ${token}` } : {}
+    })
+      .then(r => r.json())
+      .then(d => {
+        if (d.status === 'success' && d.data?.length > 0) {
+          setRealOC(d)
+          console.log(`[F&O] Real NSE data: ${d.data.length} strikes, PCR=${d.pcr}`)
+        }
+      })
+      .catch(e => console.warn('[F&O] NSE fetch failed:', e.message))
+      .finally(() => setOcLoading(false))
+  }, [data?.symbol])
+
+  // Use real data if available, else fall back to mock
+  const activeOCData = realOC?.data || (data?.optionChain ? null : null)
 
   const rows = useMemo(() => {
+    // Use real NSE chain if available
+    if (realOC?.data?.length > 0) {
+      return realOC.data
+        .map(r => ({
+          strike: r.strike,
+          ce: r.ce ? { ltp:r.ce.ltp, delta:r.ce.delta||0, oi:r.ce.oi||0, iv:r.ce.iv||0, theta:0, gamma:0 } : null,
+          pe: r.pe ? { ltp:r.pe.ltp, delta:r.pe.delta||0, oi:r.pe.oi||0, iv:r.pe.iv||0, theta:0, gamma:0 } : null,
+        }))
+        .sort((a,b) => a.strike - b.strike)
+    }
     if (!data?.optionChain) return []
     const map = new Map()
     for (const g of data.optionChain) {
@@ -14,15 +50,21 @@ export default function FOGreeks({ data }) {
       map.set(g.strikePrice, row)
     }
     return Array.from(map.values()).sort((a, b) => a.strike - b.strike)
-  }, [data])
+  }, [data, realOC])
 
   const atm = data ? Math.round(data.price / 50) * 50 : 0
   const displayRows = showAll ? rows : rows.filter(r => Math.abs(r.strike - atm) <= 200)
 
   // PCR calculation
-  const totalCE_OI = data?.optionChain?.filter(g=>g.optionType==='CE').reduce((s,g)=>s+g.oi,0) || 0
-  const totalPE_OI = data?.optionChain?.filter(g=>g.optionType==='PE').reduce((s,g)=>s+g.oi,0) || 0
-  const pcrVal = totalCE_OI > 0 ? (totalPE_OI / totalCE_OI) : data?.pcr || 1
+  // Use real NSE data if available
+  const chainData = realOC?.data || []
+  const totalCE_OI = chainData.length > 0
+    ? chainData.reduce((s,r)=>(r.ce?.oi||0)+s,0)
+    : (data?.optionChain?.filter(g=>g.optionType==='CE').reduce((s,g)=>s+g.oi,0) || 0)
+  const totalPE_OI = chainData.length > 0
+    ? chainData.reduce((s,r)=>(r.pe?.oi||0)+s,0)
+    : (data?.optionChain?.filter(g=>g.optionType==='PE').reduce((s,g)=>s+g.oi,0) || 0)
+  const pcrVal = realOC?.pcr || (totalCE_OI > 0 ? (totalPE_OI / totalCE_OI) : data?.pcr || 1)
   const pcrBias = pcrVal > 1.3 ? 'STRONG BULL' : pcrVal > 1.1 ? 'BULLISH' : pcrVal > 0.9 ? 'NEUTRAL' : pcrVal > 0.7 ? 'BEARISH' : 'STRONG BEAR'
   const pcrColor = pcrVal > 1.2 ? '#00ff88' : pcrVal < 0.8 ? '#ff3366' : '#ffd700'
 
@@ -30,7 +72,7 @@ export default function FOGreeks({ data }) {
   const maxCE_OI = Math.max(...(data?.optionChain?.filter(g=>g.optionType==='CE').map(g=>g.oi) || [1]))
   const maxPE_OI = Math.max(...(data?.optionChain?.filter(g=>g.optionType==='PE').map(g=>g.oi) || [1]))
 
-  const maxPain = data?.maxPain || 0
+  const maxPain = realOC?.maxPain || data?.maxPain || 0
   const foStrategies = data?.foStrategies || []
   const ivAvg = data?.optionChain?.length > 0
     ? +(data.optionChain.reduce((s,g)=>s+g.iv,0)/data.optionChain.length).toFixed(1) : 0
@@ -53,6 +95,8 @@ export default function FOGreeks({ data }) {
           <span className="font-mono text-muted" style={{ fontSize: 10 }}>
             SPOT ₹{fmt(data.price)} · ATM {atm}
           </span>
+          {ocLoading && <span style={{fontSize:10,color:'var(--amber)',fontFamily:"'DM Mono',monospace"}}>● Fetching NSE...</span>}
+          {realOC && <span style={{fontSize:10,color:'var(--green)',fontFamily:"'DM Mono',monospace"}}>● NSE Live OC</span>}
         </div>
       </div>
 
