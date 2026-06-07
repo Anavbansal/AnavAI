@@ -1450,7 +1450,12 @@ ${JSON.stringify({
     analysis: aiAnalysis.summary, aiAnalysis,
     latestNews: [], optionSignal,
     candleData: candles, ema20Series: ema20Ser,
-    quality: { source: "UPSTOX_LIVE", candleCount: candles.length },
+    quality: {
+      source: token && token.length > 50 ? "UPSTOX_LIVE" : "SANDBOX",
+      candleCount: candles.length,
+      hasLiveToken: !!(token && token.length > 50),
+      dataAge: candles.length > 0 ? new Date(candles[candles.length-1].timestamp).toISOString() : null,
+    },
   };
 }
 

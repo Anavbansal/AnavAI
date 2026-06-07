@@ -40,12 +40,16 @@ export default function PricePanel({ data, ai, loading }) {
 
   return (
     <div className="card animate-fade" style={{display:'flex',flexDirection:'column'}}>
-      {/* Live badge */}
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 14px',background:'#0e1420',borderBottom:'1px solid #1f2d45'}}>
-        <span style={{fontFamily:'JetBrains Mono',fontSize:10,color:data.quality?.source==='UPSTOX_LIVE'?'#10b981':'#f59e0b',fontWeight:600}}>
-          {data.quality?.source==='UPSTOX_LIVE'?'● LIVE':'● DATA'}
-        </span>
-        <span style={{fontFamily:'JetBrains Mono',fontSize:10,color:'#475569'}}>
+      {/* Data source badge */}
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'7px 14px',background:'var(--bg2)',borderBottom:'1px solid var(--border)'}}>
+        <div style={{display:'flex',alignItems:'center',gap:6}}>
+          {data.quality?.source==='UPSTOX_LIVE' ? (
+            <><span style={{width:7,height:7,borderRadius:'50%',background:'var(--green)',display:'inline-block',boxShadow:'0 0 6px var(--green)',animation:'pulse 2s infinite'}}/><span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:'var(--green)',fontWeight:700,letterSpacing:.5}}>● LIVE MARKET DATA</span></>
+          ) : (
+            <><span style={{width:7,height:7,borderRadius:'50%',background:'var(--amber)',display:'inline-block'}}/><span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:'var(--amber)',fontWeight:600}}>● HISTORICAL DATA</span></>
+          )}
+        </div>
+        <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:'var(--text3)'}}>
           {data.candles?.length} candles
         </span>
       </div>

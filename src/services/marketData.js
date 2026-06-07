@@ -201,16 +201,21 @@ function buildAIShape(aiAnalysis, optionSignal, symbol) {
 }
 
 // ─── PUBLIC: analyzeSymbol ────────────────────────────────────────────────────
-export async function analyzeSymbol(input, timeframe = '5') {
+export async function analyzeSymbol(input, timeframe = '5', mode = 'tech') {
   const symbol = typeof input === 'string' ? input : input?.symbol
   const instrumentKey = typeof input === 'string' ? '' : (input?.instrumentKey ?? '')
   const clean = cleanSym(symbol)
+  // Always send live token if available
+  const token = localStorage.getItem('upstox_access_token') || ''
 
   try {
+    const headers = { 'Content-Type': 'application/json' }
+    if (token) headers['Authorization'] = `Bearer ${token}`
+
     const res = await fetch(ANALYZE_URL, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ symbol: clean, instrumentKey, resolution: timeframe, mode: 'tech' }),
+      headers,
+      body:    JSON.stringify({ symbol: clean, instrumentKey, resolution: timeframe, mode }),
     })
 
     const payload = await res.json().catch(() => null)
@@ -236,7 +241,9 @@ export async function analyzeSymbol(input, timeframe = '5') {
 // ─── PUBLIC: searchSymbol ─────────────────────────────────────────────────────
 export async function searchSymbol(query) {
   try {
-    const res  = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}`)
+    const token = localStorage.getItem('upstox_access_token') || ''
+    const headers = token ? { Authorization: `Bearer ${token}` } : {}
+    const res  = await fetch(`${SEARCH_URL}?q=${encodeURIComponent(query)}`, { headers })
     const data = await res.json()
     return Array.isArray(data?.results) ? data.results : []
   } catch {
