@@ -16,6 +16,7 @@ import RiskCalculator from '../components/RiskCalculator'
 import MarketScanner from '../components/MarketScanner'
 import PriceAlerts from '../components/PriceAlerts'
 import EconomicCalendar from '../components/EconomicCalendar'
+import PersonalFinance from '../components/PersonalFinance'
 import { useAnalysis } from '../hooks/useAnalysis'
 
 // Bottom nav tabs (mobile) — keep to 5 max
@@ -41,7 +42,7 @@ const ALL_TABS = [
   {id:'mf',        label:'Mutual Funds',icon:'🏦'},
 ]
 
-const NO_REFETCH = new Set(['portfolio','mf','scanner','alerts','calendar','risk'])
+const NO_REFETCH = new Set(['portfolio','mf','scanner','alerts','calendar','risk','pf'])
 const MODE = {overview:'tech',intraday:'intraday',delivery:'delivery',fo:'fo'}
 
 // Hook: detect mobile
@@ -234,6 +235,7 @@ export default function Dashboard() {
         {tab==='calendar' && <EconomicCalendar/>}
         {tab==='risk'     && <RiskCalculator/>}
         {tab==='portfolio'&& <Portfolio onSelectSymbol={handleSelectSymbol}/>}
+        {tab==='pf'        && <PersonalFinance/>}
         {tab==='mf'       && <MutualFunds/>}
 
       </main>
@@ -274,6 +276,7 @@ export default function Dashboard() {
                 {id:'risk',     label:'Risk Calc',  icon:'🎯'},
                 {id:'portfolio',label:'Portfolio',  icon:'💼'},
                 {id:'mf',       label:'MF',         icon:'🏦'},
+                {id:'pf',       label:'My Finance', icon:'💼'},
               ].map(t=>(
                 <button key={t.id}
                   onClick={()=>{ changeTab(t.id); setMoreOpen(false); }}
