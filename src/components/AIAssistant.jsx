@@ -220,13 +220,23 @@ function now() {
 }
 
 export default function AIAssistant({ data, ai }) {
-  const [open, setOpen]     = useState(false)
-  const [tab, setTab]       = useState('chat') // 'chat' | 'stocks'
-  const [msgs, setMsgs]     = useState([{
+  const [open, setOpen] = useState(false)
+  const [tab, setTab]   = useState('chat')
+
+  // Session memory — persists across page refreshes
+  const STORAGE_KEY = 'anav_ai_chat_v2'
+  const defaultMsg  = {
     role:'assistant',
     content:`👋 **Namaste! Main ANAV AI hun.**\n\nMain kisi bhi Indian stock ka live data fetch karke analysis de sakta hun. Bas stock ka naam likhein — jaise "RELIANCE ka analysis karo" ya "SBIN buy ya sell?"\n\nYa neeche ke quick prompts use karein! 🚀`,
     time: now(),
-  }])
+  }
+  const loadMsgs = () => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null')
+      return Array.isArray(saved) && saved.length > 0 ? saved : [defaultMsg]
+    } catch { return [defaultMsg] }
+  }
+  const [msgs, setMsgs] = useState(loadMsgs)
   const [input, setInput]   = useState('')
   const [busy, setBusy]     = useState(false)
   const [unread, setUnread] = useState(0)
@@ -237,6 +247,13 @@ export default function AIAssistant({ data, ai }) {
   useEffect(() => {
     msgsEndRef.current?.scrollIntoView({ behavior:'smooth' })
   }, [msgs, busy])
+
+  // Save chat history to localStorage
+  useEffect(() => {
+    if (msgs.length > 1) {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(msgs.slice(-40))) } catch {}
+    }
+  }, [msgs])
 
   useEffect(() => {
     if (open) {
@@ -293,11 +310,13 @@ export default function AIAssistant({ data, ai }) {
   }
 
   function clear() {
-    setMsgs([{
+    const initial = [{
       role:'assistant',
       content:'Chat cleared. Koi bhi stock ka naam likhein — main live data fetch karke analysis dunga! 📈',
       time: now(),
-    }])
+    }]
+    setMsgs(initial)
+    try { localStorage.removeItem(STORAGE_KEY) } catch {}
   }
 
   return (

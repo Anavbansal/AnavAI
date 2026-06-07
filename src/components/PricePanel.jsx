@@ -127,6 +127,33 @@ export default function PricePanel({ data, ai, loading }) {
         ))}
       </div>
 
+      {/* Prev close + circuit */}
+      {data.pdhdpl && (
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:1,background:'var(--border)',borderBottom:'1px solid var(--border)'}}>
+          {[
+            {n:'PDH',v:`₹${Math.round(data.pdhdpl.pdh).toLocaleString('en-IN')}`,c:'var(--red)'},
+            {n:'PDC',v:`₹${Math.round(data.pdhdpl.pdc).toLocaleString('en-IN')}`,c:'var(--text2)'},
+            {n:'PDL',v:`₹${Math.round(data.pdhdpl.pdl).toLocaleString('en-IN')}`,c:'var(--green)'},
+          ].map(m=>(
+            <div key={m.n} style={{background:'var(--bg2)',padding:'7px 8px',textAlign:'center'}}>
+              <div style={{fontSize:9,color:'var(--text3)',fontWeight:600,letterSpacing:.8}}>{m.n}</div>
+              <div style={{fontFamily:"'DM Mono',monospace",fontWeight:600,color:m.c,fontSize:11}}>{m.v}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {data.gapAnalysis && data.gapAnalysis.gapPct !== 0 && (
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'6px 14px',
+          background:data.gapAnalysis.gapPct>0?'#22c55e0a':'#ef444408',
+          borderBottom:'1px solid var(--border)'}}>
+          <span style={{fontSize:11,color:'var(--text3)'}}>Pre-market gap</span>
+          <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,
+            color:data.gapAnalysis.gapPct>0?'var(--green)':'var(--red)'}}>
+            {data.gapAnalysis.gapPct>0?'+':''}{data.gapAnalysis.gapPct}% ({data.gapAnalysis.type.replace(/_/g,' ')})
+          </span>
+        </div>
+      )}
+
       {/* Trade levels */}
       {ai && (
         <div style={{padding:'12px 16px',borderBottom:'1px solid #1f2d45',display:'flex',flexDirection:'column',gap:8}}>

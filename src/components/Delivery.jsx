@@ -1,238 +1,245 @@
-import React, { useState } from 'react'
-import { fmt } from '../utils/indicators'
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
+import React, { useState, useEffect } from 'react'
+import { API_BASE_URL } from '../config'
 
-export default function Delivery({ data, ai }) {
-  const [showFib, setShowFib] = useState(false)
+const f2 = (n,d=2) => Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:d,maximumFractionDigits:d})
+const fc = n => `₹${f2(n)}`
 
-  if (!data || !ai) return (
-    <div className="panel flex items-center justify-center py-10 gap-3">
-      <div style={{ fontSize: 32, opacity: 0.3 }}>📦</div>
-      <div>
-        <div className="font-display text-muted text-xs tracking-widest">DELIVERY IDLE</div>
-        <div className="font-mono text-dim mt-1" style={{ fontSize: 11 }}>Run analysis for swing/positional view</div>
+function Row({label,value,color='var(--text)',sub}) {
+  return (
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',padding:'7px 0',borderBottom:'1px solid #1f2d4522'}}>
+      <span style={{fontSize:12,color:'var(--text2)'}}>{label}</span>
+      <div style={{textAlign:'right'}}>
+        <div style={{fontFamily:"'DM Mono',monospace",fontSize:12,fontWeight:600,color}}>{value}</div>
+        {sub&&<div style={{fontSize:10,color:'var(--text3)'}}>{sub}</div>}
       </div>
     </div>
   )
+}
 
-  const closes = data.candles.map(c => c.close)
-  const chartData = data.candles.slice(-45).map(c => ({
-    date: new Date(c.timestamp).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
-    price: c.close,
-  }))
+function Section({title,children}) {
+  return (
+    <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,overflow:'hidden',marginBottom:10}}>
+      <div style={{padding:'8px 12px',background:'var(--bg2)',borderBottom:'1px solid var(--border)',
+        fontSize:11,fontWeight:700,color:'var(--text2)',letterSpacing:.8,textTransform:'uppercase'}}>{title}</div>
+      <div style={{padding:'4px 12px 8px'}}>{children}</div>
+    </div>
+  )
+}
 
-  const min = Math.min(...closes.slice(-45))
-  const max = Math.max(...closes.slice(-45))
-  const verdict = ai.verdict
-  const accentColor = verdict === 'BUY' ? '#00ff88' : verdict === 'SELL' ? '#ff3366' : '#ffd700'
+const SECTOR_MAP = {
+  'RELIANCE':'Energy','TCS':'IT','HDFCBANK':'Banking','INFY':'IT','ICICIBANK':'Banking',
+  'SBIN':'Banking','WIPRO':'IT','TATAMOTORS':'Auto','TATASTEEL':'Metals','NTPC':'Power',
+  'SUNPHARMA':'Pharma','ADANIENT':'Conglomerate','ZOMATO':'Consumer Tech',
+  'NATIONALUM':'Metals','RVNL':'Infra','IRFC':'Finance','TATAPOWER':'Power',
+}
 
-  // Fibonacci levels
+export default function Delivery({ data, ai }) {
+  const [fundamentals, setFundamentals] = useState(null)
+  const [tab, setTab] = useState('swing')
+
+  // Fetch fundamentals
+  useEffect(()=>{
+    if (!data?.symbol) return
+    const token = localStorage.getItem('upstox_access_token') || ''
+    fetch(`${API_BASE_URL}/fundamentals?symbol=${data.symbol}`, {
+      headers: token ? {Authorization:`Bearer ${token}`} : {}
+    })
+      .then(r=>r.json())
+      .then(d=>{ if(d?.status==='success') setFundamentals(d.data) })
+      .catch(()=>{})
+  },[data?.symbol])
+
+  if (!data || !ai) return (
+    <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
+      padding:40,gap:10,background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10}}>
+      <div style={{fontSize:36,opacity:.12}}>📦</div>
+      <div style={{color:'var(--text3)',fontSize:13}}>Run delivery analysis to see swing signals</div>
+    </div>
+  )
+
+  const bull = ai.verdict==='BUY', bear = ai.verdict==='SELL'
+  const vclr = bull?'var(--green)':bear?'var(--red)':'var(--amber)'
+
+  const pd = data.pdhdpl
   const fib = data.fibonacci
-  const pp  = data.pivotPoints?.standard
   const obv = data.obv
-  const obvColor = obv?.trend === 'ACCUMULATION' ? '#00ff88' : obv?.trend === 'DISTRIBUTION' ? '#ff3366' : '#6a9ab8'
+  const adx = data.adx
+  const high52w = data.high52w || 0
+  const low52w  = data.low52w  || 0
+  const price   = data.price   || 0
+  const pct52   = high52w > low52w ? ((price-low52w)/(high52w-low52w)*100).toFixed(1) : null
+  const volComp = data.volComparison
+  const sector  = SECTOR_MAP[data.symbol] || fundamentals?.sector || '–'
 
-  // Better swing targets using Fibonacci
-  const swingEntry  = +(data.resistance - (data.resistance - data.support) * (verdict === 'BUY' ? 0.382 : 0.618)).toFixed(2)
-  const swingTarget1 = fib ? fib.fib236 : +(data.resistance * 1.018).toFixed(2)
-  const swingTarget2 = fib ? fib.fib1272 : +(data.resistance * 1.042).toFixed(2)
-  const swingSL      = fib ? fib.fib618  : +(data.support * 0.985).toFixed(2)
-
-  // Trend strengths
-  const ema20above50 = data.ema20 > data.ema50
-  const ema50above200 = data.ema200 > 0 ? data.ema50 > data.ema200 : null
-  const longTermBull = ema50above200 !== null ? ema50above200 : data.price > data.ema50
+  // Swing targets
+  const entry   = ai.entry   || price
+  const target1 = ai.target  || (fib?.fib236 || price*1.05)
+  const target2 = fib?.fib1272 || price*1.10
+  const sl      = ai.stopLoss|| (fib?.fib618 || price*0.95)
 
   return (
-    <div className="panel animate-fadein">
-      <div className="panel-header">
-        <div className="panel-title">📦 Delivery / Swing Trade</div>
-        <div className="ml-auto flex items-center gap-2">
-          <span className="font-mono text-muted" style={{fontSize:10}}>
-            {verdict} — {ai.confidence}% conf
-          </span>
-          <button onClick={() => setShowFib(s=>!s)}
-            className="font-mono border border-border text-muted px-2 py-0.5 hover:border-accent transition-colors"
-            style={{fontSize:9}}>
-            {showFib ? 'HIDE FIB' : 'FIB LEVELS'}
-          </button>
+    <div style={{display:'flex',flexDirection:'column'}}>
+      {/* Header */}
+      <div style={{background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:'10px 10px 0 0',
+        padding:'10px 14px',display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+        <span style={{fontSize:16}}>📦</span>
+        <span style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:14}}>Delivery / Swing</span>
+        <div style={{marginLeft:'auto',display:'flex',gap:4}}>
+          {['swing','52w','volume','fundamentals'].map(t=>(
+            <button key={t} onClick={()=>setTab(t)} style={{
+              padding:'3px 9px',borderRadius:5,border:'none',cursor:'pointer',fontSize:11,
+              background:tab===t?'var(--accent)':'var(--bg2)',
+              color:tab===t?'#fff':'var(--text3)',
+            }}>{t.charAt(0).toUpperCase()+t.slice(1)}</button>
+          ))}
         </div>
       </div>
 
-      <div className="p-3 flex flex-col gap-3">
-        {/* 45-day area chart */}
-        <div style={{ height: 130 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-              <defs>
-                <linearGradient id="priceGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={accentColor} stopOpacity={0.3} />
-                  <stop offset="95%" stopColor={accentColor} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <XAxis dataKey="date" tick={{ fill: '#3a5a7a', fontSize: 9 }} tickLine={false} axisLine={false} interval={8} />
-              <YAxis domain={[min * 0.997, max * 1.003]} hide />
-              <Tooltip formatter={v => `₹${fmt(v)}`}
-                contentStyle={{ background: '#0a1520', border: '1px solid #1a3050', fontFamily: 'Share Tech Mono', fontSize: 11 }} />
-              {pp && <ReferenceLine y={pp.pp} stroke="#00d4ff" strokeDasharray="3 3" strokeOpacity={0.5} />}
-              {pp && <ReferenceLine y={pp.r1} stroke="#ff3366" strokeDasharray="2 4" strokeOpacity={0.4} />}
-              {pp && <ReferenceLine y={pp.s1} stroke="#00ff88" strokeDasharray="2 4" strokeOpacity={0.4} />}
-              <Area type="monotone" dataKey="price" stroke={accentColor} fill="url(#priceGrad)" strokeWidth={1.5} dot={false} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
+      {/* SWING TAB */}
+      {tab==='swing' && <>
+        {/* Verdict */}
+        <Section title="🎯 Swing Signal">
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 0'}}>
+            <div>
+              <div style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:24,color:vclr,letterSpacing:2}}>{ai.verdict}</div>
+              <div style={{fontSize:11,color:'var(--text3)',marginTop:2}}>Confidence: {ai.confidence}% · R:R {ai.riskReward?.toFixed(1)}:1</div>
+            </div>
+            <div>
+              <div style={{width:56,height:56,borderRadius:'50%',border:`3px solid ${vclr}`,
+                display:'flex',alignItems:'center',justifyContent:'center',
+                fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:16,color:vclr}}>
+                {ai.confidence}%
+              </div>
+            </div>
+          </div>
+          <Row label="Entry"    value={fc(entry)}   color="var(--accent2)"/>
+          <Row label="Target 1" value={fc(target1)} color="var(--green)"/>
+          <Row label="Target 2" value={fc(target2)} color="var(--green)" sub="Fib extension"/>
+          <Row label="Stop Loss" value={fc(sl)}     color="var(--red)"/>
+        </Section>
 
         {/* EMA Alignment */}
-        <div className="p-2 border border-border/50">
-          <div className="font-mono text-dim uppercase tracking-widest mb-2" style={{fontSize:10}}>EMA Alignment (Trend Structure)</div>
-          <div className="flex gap-3 flex-wrap">
+        <Section title="📈 EMA Trend Structure">
+          {[{l:'EMA9',v:data.ema9||0},{l:'EMA20',v:data.ema20},{l:'EMA50',v:data.ema50},{l:'EMA200',v:data.ema200}].map(e=>(
+            <Row key={e.l} label={e.l} value={fc(e.v)}
+              color={price>e.v?'var(--green)':'var(--red)'}
+              sub={price>e.v?'Price above — bullish':'Price below — bearish'}/>
+          ))}
+          <Row label="EMA20 vs EMA50" value={data.ema20>data.ema50?'EMA20 > EMA50 (Bull)':'EMA20 < EMA50 (Bear)'}
+            color={data.ema20>data.ema50?'var(--green)':'var(--red)'}/>
+        </Section>
+
+        {/* OBV + ADX */}
+        <Section title="📊 Volume Flow & Trend Strength">
+          {obv && <Row label="OBV Trend" value={obv.trend} color={obv.trend==='ACCUMULATION'?'var(--green)':obv.trend==='DISTRIBUTION'?'var(--red)':'var(--text3)'}/>}
+          {adx && <Row label="ADX (Trend Strength)" value={`${adx.adx} — ${adx.trend}`} color={adx.adx>=30?'var(--green)':adx.adx>=20?'var(--amber)':'var(--text3)'}/>}
+          {adx && <Row label="+DI / -DI" value={`${adx.pdi} / ${adx.mdi}`} color={adx.pdi>adx.mdi?'var(--green)':'var(--red)'}/>}
+        </Section>
+
+        {/* Fibonacci */}
+        {fib && (
+          <Section title="🌀 Fibonacci Levels">
             {[
-              { label:'EMA9', val:data.ema9, above: data.price > (data.ema9||0) },
-              { label:'EMA20', val:data.ema20, above: data.price > data.ema20 },
-              { label:'EMA50', val:data.ema50, above: data.price > data.ema50 },
-              { label:'EMA200', val:data.ema200, above: data.price > (data.ema200||0) },
-            ].map(e => (
-              <div key={e.label} className="flex flex-col items-center">
-                <span className="font-mono text-dim" style={{fontSize:9}}>{e.label}</span>
-                <span className="font-display font-bold" style={{fontSize:11, color: e.above?'#00ff88':'#ff3366'}}>
-                  {e.above ? '▲' : '▼'} ₹{fmt(e.val||0)}
-                </span>
+              ['0%',    fib.fib0,   'var(--text3)'],
+              ['23.6%', fib.fib236, 'var(--amber)'],
+              ['38.2%', fib.fib382, 'var(--amber)'],
+              ['50%',   fib.fib500, 'var(--accent2)'],
+              ['61.8%', fib.fib618, 'var(--green)'],
+              ['100%',  fib.fib1000,'var(--text3)'],
+              ['127.2%',fib.fib1272,'var(--green)'],
+              ['161.8%',fib.fib1618,'var(--green)'],
+            ].map(([k,v,c])=>(
+              <div key={k} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',
+                borderBottom:'1px solid #1f2d4522',
+                background:v&&Math.abs(price-v)<(data.atr||10)*2?`${c}08`:'transparent'}}>
+                <span style={{fontSize:11,color:c,fontFamily:"'DM Mono',monospace"}}>{k}</span>
+                <span style={{fontFamily:"'DM Mono',monospace",fontSize:12,fontWeight:600,color:c}}>{fc(v)}</span>
+                {v&&Math.abs(price-v)<(data.atr||10)*2&&<span style={{fontSize:9,color:c}}>← CMP NEAR</span>}
               </div>
             ))}
-          </div>
-        </div>
+          </Section>
+        )}
+      </>}
 
-        {/* Swing Levels */}
-        <div className="grid grid-cols-2 gap-2">
-          {[
-            { label: 'SWING ENTRY', val: `₹${fmt(ai.entry ?? swingEntry)}`, color: '#00d4ff' },
-            { label: 'SWING SL',    val: `₹${fmt(swingSL)}`, color: '#ff3366' },
-            { label: 'TARGET 1',    val: `₹${fmt(swingTarget1)}`, color: '#00ff88' },
-            { label: 'TARGET 2',    val: `₹${fmt(swingTarget2)}`, color: '#00ff88' },
-          ].map(l => (
-            <div key={l.label} className="p-2 border border-border/50">
-              <div className="font-mono text-dim uppercase tracking-wider" style={{ fontSize: 10 }}>{l.label}</div>
-              <div className="font-display font-bold mt-1" style={{ fontSize: 14, color: l.color }}>{l.val}</div>
-            </div>
+      {/* 52W TAB */}
+      {tab==='52w' && <>
+        <Section title="📅 52-Week Range">
+          <Row label="52W High" value={fc(high52w)} color="var(--red)"/>
+          <Row label="52W Low"  value={fc(low52w)}  color="var(--green)"/>
+          <Row label="Current"  value={fc(price)}   color={price>high52w*0.95?'var(--red)':price<low52w*1.05?'var(--green)':'var(--text)'}/>
+          {pct52 && <Row label="Position in Range" value={`${pct52}% from low`}
+            color={Number(pct52)>80?'var(--red)':Number(pct52)<20?'var(--green)':'var(--amber)'}
+            sub={Number(pct52)>90?'⚠ Near 52W high — risk high':Number(pct52)<10?'📈 Near 52W low — opportunity?':'Mid-range'}/>}
+          {high52w>0&&<div style={{margin:'10px 0',height:12,background:'var(--border)',borderRadius:6,overflow:'hidden',position:'relative'}}>
+            <div style={{position:'absolute',height:'100%',width:`${pct52||50}%`,
+              background:`linear-gradient(90deg,var(--green),var(--amber),var(--red))`,borderRadius:6}}/>
+            <div style={{position:'absolute',left:`${pct52||50}%`,top:-2,width:4,height:16,
+              background:'#fff',borderRadius:2,transform:'translateX(-50%)'}}/>
+          </div>}
+          {pd && <><Row label="Prev Day High (PDH)" value={fc(pd.pdh)} color="var(--red)"/>
+          <Row label="Prev Day Low (PDL)"  value={fc(pd.pdl)} color="var(--green)"/>
+          <Row label="Prev Day Close (PDC)"value={fc(pd.pdc)} color="var(--text2)"/></>}
+        </Section>
+
+        {/* Multi-timeframe trend */}
+        <Section title="📊 Multi-Timeframe Trend">
+          {[['Short-term (M5)',data.m5Trend],['Medium-term (M15)',data.m15Trend],
+            ['EMA20 vs 50',data.ema20>data.ema50?'BULLISH':'BEARISH'],
+            ['EMA50 vs 200',data.ema50>(data.ema200||0)?'BULLISH':'BEARISH'],
+          ].map(([l,v])=>(
+            <Row key={l} label={l} value={v||'–'} color={v==='BULLISH'?'var(--green)':v==='BEARISH'?'var(--red)':'var(--amber)'}/>
           ))}
-        </div>
+        </Section>
+      </>}
 
-        {/* OBV Volume Flow */}
-        {obv && (
-          <div className="flex items-center gap-3 p-2 border border-border/50">
-            <div style={{fontSize:20, color:obvColor}}>
-              {obv.trend === 'ACCUMULATION' ? '📈' : obv.trend === 'DISTRIBUTION' ? '📉' : '➡'}
-            </div>
-            <div className="flex-1">
-              <div className="font-mono text-dim uppercase" style={{fontSize:9}}>Volume Flow (OBV)</div>
-              <div className="font-display font-bold" style={{fontSize:12, color:obvColor}}>
-                {obv.trend}
-              </div>
-              <div className="font-mono text-dim" style={{fontSize:10}}>
-                {obv.trend === 'ACCUMULATION' ? 'Smart money buying — supports bullish thesis'
-                  : obv.trend === 'DISTRIBUTION' ? 'Institutional selling — bearish volume divergence'
-                  : 'Volume neutral — no directional bias from OBV'}
-              </div>
-            </div>
-          </div>
-        )}
+      {/* VOLUME TAB */}
+      {tab==='volume' && <>
+        <Section title="📊 Volume Analysis">
+          {volComp && <>
+            <Row label="Today's Volume"  value={(volComp.todayVol/1000).toFixed(0)+'K'} color="var(--text)"/>
+            <Row label="10-Day Avg"      value={(volComp.avgVol/1000).toFixed(0)+'K'}   color="var(--text3)"/>
+            <Row label="Volume Ratio"    value={`${volComp.ratio}x`}
+              color={volComp.ratio>2?'var(--green)':volComp.ratio>1.4?'var(--amber)':'var(--text3)'}/>
+            <Row label="Signal"          value={volComp.signal.replace('_',' ')}
+              color={volComp.signal==='VERY_HIGH'||volComp.signal==='HIGH'?'var(--green)':'var(--text3)'}/>
+          </>}
+          <Row label="Volume Ratio (curr)" value={`${(data.volumeRatio||1).toFixed(2)}x`}
+            color={(data.volumeRatio||1)>1.4?'var(--green)':'var(--text3)'}/>
+          {obv&&<Row label="OBV Trend" value={obv.trend} color={obv.trend==='ACCUMULATION'?'var(--green)':obv.trend==='DISTRIBUTION'?'var(--red)':'var(--text3)'}/>}
+        </Section>
+        <Section title="🏭 Sector Context">
+          <Row label="Sector" value={sector} color="var(--accent2)"/>
+          <Row label="Market Cap" value={data.riskProfile?.profile||'–'} color="var(--text2)"/>
+          <Row label="Regime" value={(data.regime||'–').replace(/_/g,' ')} color="var(--text2)"/>
+        </Section>
+      </>}
 
-        {/* Fibonacci Levels */}
-        {showFib && fib && (
-          <div className="p-2 border border-border/50">
-            <div className="font-mono text-accent uppercase tracking-widest mb-2" style={{fontSize:10}}>
-              Fibonacci Retracement Levels ({fib.isBullish ? 'Bullish' : 'Bearish'} Swing)
+      {/* FUNDAMENTALS TAB */}
+      {tab==='fundamentals' && (
+        <Section title="🏢 Fundamental Data">
+          {fundamentals ? <>
+            <Row label="Company"      value={fundamentals.company_name||data.symbol} color="var(--text)"/>
+            <Row label="Sector"       value={fundamentals.sector||'–'}               color="var(--accent2)"/>
+            <Row label="Industry"     value={fundamentals.industry||'–'}             color="var(--text2)"/>
+            {fundamentals.pe_ratio&&<Row label="P/E Ratio"   value={fundamentals.pe_ratio?.toFixed(1)||'–'}
+              color={fundamentals.pe_ratio>40?'var(--red)':fundamentals.pe_ratio<15?'var(--green)':'var(--amber)'}/>}
+            {fundamentals.pb_ratio&&<Row label="P/B Ratio"   value={fundamentals.pb_ratio?.toFixed(2)||'–'}
+              color={fundamentals.pb_ratio>5?'var(--red)':fundamentals.pb_ratio<1?'var(--green)':'var(--amber)'}/>}
+            {fundamentals.eps&&<Row label="EPS (₹)"         value={fc(fundamentals.eps)} color="var(--text)"/>}
+            {fundamentals.dividend_yield&&<Row label="Div Yield" value={`${fundamentals.dividend_yield?.toFixed(2)}%`}
+              color={fundamentals.dividend_yield>2?'var(--green)':'var(--text3)'}/>}
+            {fundamentals.market_cap&&<Row label="Market Cap" value={`₹${(fundamentals.market_cap/1e7).toFixed(0)} Cr`}
+              color="var(--text2)"/>}
+            {fundamentals.week52High&&<Row label="52W High" value={fc(fundamentals.week52High)} color="var(--red)"/>}
+            {fundamentals.week52Low &&<Row label="52W Low"  value={fc(fundamentals.week52Low)}  color="var(--green)"/>}
+          </> : (
+            <div style={{padding:'16px 0',textAlign:'center',color:'var(--text3)',fontSize:13}}>
+              Loading fundamentals… <br/>
+              <span style={{fontSize:11}}>Requires valid Upstox token or NSE API access</span>
             </div>
-            <div className="text-dim font-mono mb-1" style={{fontSize:10}}>
-              Range: ₹{fmt(fib.lowest)} → ₹{fmt(fib.highest)} (₹{fmt(fib.range)})
-            </div>
-            {[
-              { k:'0%',   v:fib.fib0,   desc:'Swing High/Low',         c:'#c8dff0' },
-              { k:'23.6%',v:fib.fib236, desc:'Shallow pullback zone',   c:'#ffd700' },
-              { k:'38.2%',v:fib.fib382, desc:'Key retracement level',   c:'#ffd700' },
-              { k:'50%',  v:fib.fib500, desc:'Mid-point (psychological)',c:'#00d4ff' },
-              { k:'61.8%',v:fib.fib618, desc:'Golden ratio — key S/R',  c:'#00ff88' },
-              { k:'78.6%',v:fib.fib786, desc:'Deep retracement',         c:'#ff6b35' },
-              { k:'100%', v:fib.fib1000,desc:'Swing Low/High',           c:'#c8dff0' },
-              { k:'127.2%',v:fib.fib1272,desc:'Extension target 1',     c:'#00ff8877' },
-              { k:'161.8%',v:fib.fib1618,desc:'Extension target 2',     c:'#00ff8855' },
-            ].map(({ k, v, desc, c }) => (
-              <div key={k} className="flex items-center gap-2 py-1 border-b border-border/20 last:border-0"
-                style={{ background: data.price && Math.abs(data.price - v) < (data.atr || 10)*2 ? `${c}12` : 'transparent' }}>
-                <span className="font-mono" style={{fontSize:10, color:c, width:48, flexShrink:0}}>{k}</span>
-                <span className="font-mono font-bold text-muted" style={{fontSize:11, width:80, flexShrink:0}}>₹{fmt(v)}</span>
-                <span className="font-mono text-dim flex-1" style={{fontSize:10}}>{desc}</span>
-                {data.price && Math.abs(data.price - v) < (data.atr||10)*2 && (
-                  <span className="font-mono" style={{fontSize:9, color:c}}>← CMP NEAR</span>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Pivot Points */}
-        {pp && (
-          <div className="p-2 border border-border/50">
-            <div className="font-mono text-dim uppercase tracking-widest mb-2" style={{fontSize:10}}>Daily Pivot Points</div>
-            <div className="grid grid-cols-4 gap-1">
-              {[
-                {k:'R2', v:pp.r2, c:'#ff3366'},
-                {k:'R1', v:pp.r1, c:'#ff6b35'},
-                {k:'PP', v:pp.pp, c:'#00d4ff'},
-                {k:'S1', v:pp.s1, c:'#00ff88'},
-                {k:'S2', v:pp.s2, c:'#00ff8888'},
-              ].map(({k, v, c}) => (
-                <div key={k} className="flex flex-col items-center p-1 border border-border/30"
-                  style={{background: data.price && Math.abs(data.price - v) < (data.atr||10)*1.5 ? `${c}12` : 'transparent'}}>
-                  <span className="font-mono" style={{fontSize:9, color:c}}>{k}</span>
-                  <span className="font-mono text-muted" style={{fontSize:10}}>₹{fmt(v)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Trend Analysis */}
-        <div className="border-t border-border/50 pt-3">
-          <div className="font-mono text-accent uppercase tracking-widest mb-2" style={{ fontSize: 10 }}>Trend Analysis</div>
-          {[
-            { label: 'Short-term (1-5 days)',   val: data.m5Trend,  desc: `EMA20 ${ema20above50?'above':'below'} EMA50` },
-            { label: 'Medium-term (1-4 weeks)', val: data.m15Trend, desc: `EMA50 ${ema50above200===null?'vs':ema50above200?'above':'below'} EMA200` },
-            { label: 'Long-term (1-3 months)',  val: longTermBull ? 'BULLISH' : 'BEARISH',
-              desc: `Price ${data.ema200>0?(data.price>data.ema200?'above':'below')+' EMA200':'vs EMA50'}` },
-          ].map(t => (
-            <div key={t.label} className="flex justify-between items-center py-1.5 border-b border-border/30 last:border-0">
-              <div>
-                <span className="font-mono text-muted block" style={{ fontSize: 12 }}>{t.label}</span>
-                <span className="font-mono text-dim" style={{ fontSize: 10 }}>{t.desc}</span>
-              </div>
-              <span className="font-display font-bold" style={{ fontSize: 12,
-                color: t.val === 'BULLISH' ? '#00ff88' : t.val === 'BEARISH' ? '#ff3366' : '#ffd700' }}>
-                {t.val}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        {/* ADX for Delivery */}
-        {data.adx && (
-          <div className="p-2 border border-border/50">
-            <div className="flex justify-between items-center">
-              <span className="font-mono text-dim uppercase" style={{fontSize:10}}>Trend Conviction (ADX)</span>
-              <span className="font-display font-bold" style={{fontSize:12,
-                color: data.adx.adx>=40?'#00ff88':data.adx.adx>=25?'#ffd700':'#6a9ab8'}}>
-                {data.adx.adx} — {data.adx.trend}
-              </span>
-            </div>
-            <div className="font-mono text-dim mt-1" style={{fontSize:10}}>
-              {data.adx.adx >= 40 ? 'Strong trend — high conviction for positional trades'
-               : data.adx.adx >= 25 ? 'Trending — moderate conviction, use trend-following strategies'
-               : data.adx.adx >= 15 ? 'Weak trend — exercise caution, use range strategies'
-               : 'Flat market — avoid delivery trades, no clear direction'}
-            </div>
-          </div>
-        )}
-      </div>
+          )}
+        </Section>
+      )}
     </div>
   )
 }

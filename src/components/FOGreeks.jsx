@@ -151,7 +151,7 @@ export default function FOGreeks({ data }) {
 
       {/* Tab buttons */}
       <div className="flex border-b border-border">
-        {[['chain','Options Chain'],['oi','OI Visual'],['strategy','Strategies']].map(([id,label])=>(
+        {[['chain','Options Chain'],['oi','OI Visual'],['strategy','Strategies'],['ivrank','IV Rank'],['spread','Spread Calc']].map(([id,label])=>(
           <button key={id} onClick={()=>setActiveTab(id)}
             className={`font-mono px-3 py-1.5 transition-colors flex-1 ${activeTab===id?'text-accent border-b-2 border-accent bg-accent/5':'text-muted hover:text-accent/70'}`}
             style={{fontSize:10}}>
@@ -348,6 +348,178 @@ export default function FOGreeks({ data }) {
           )}
         </div>
       )}
+
+      {/* IV RANK TAB */}
+      {activeTab === 'ivrank' && (
+        <div className="p-3 flex flex-col gap-3">
+          <div className="font-mono text-dim" style={{fontSize:10}}>
+            IV Rank measures where current IV sits within its 52-week range. IV Percentile shows % of days with lower IV.
+          </div>
+          {(() => {
+            const ivr = data?.ivData
+            const ivAvgLocal = data?.optionChain?.length > 0
+              ? +(data.optionChain.reduce((s,g)=>s+g.iv,0)/data.optionChain.length).toFixed(1) : ivAvg
+            return (
+              <>
+                <div style={{padding:12,background:'var(--surface2)',border:'1px solid var(--border)',borderRadius:8}}>
+                  <div className="font-mono text-dim uppercase" style={{fontSize:9,marginBottom:6}}>CURRENT IV</div>
+                  <div className="font-display font-bold" style={{fontSize:28,color:ivAvgLocal>25?'var(--red)':ivAvgLocal<12?'var(--green)':'var(--amber)'}}>{ivAvgLocal}%</div>
+                  <div className="font-mono text-dim" style={{fontSize:10}}>{ivAvgLocal>25?'HIGH IV — Sell options (Strangles, IC)':ivAvgLocal<12?'LOW IV — Buy options (Straddles, Spreads)':'NORMAL IV — Neutral strategies'}</div>
+                </div>
+                {ivr && (
+                  <>
+                    <div style={{padding:10,background:'var(--surface2)',border:'1px solid var(--border)',borderRadius:8}}>
+                      <div className="font-mono text-dim uppercase" style={{fontSize:9,marginBottom:4}}>IV RANK (52W)</div>
+                      <div className="font-display font-bold" style={{fontSize:22,color:ivr.ivRank>70?'var(--red)':ivr.ivRank<30?'var(--green)':'var(--amber)'}}>{ivr.ivRank}%</div>
+                      <div style={{height:6,background:'var(--border)',borderRadius:3,overflow:'hidden',marginTop:6}}>
+                        <div style={{height:'100%',width:`${ivr.ivRank}%`,background:ivr.ivRank>70?'var(--red)':ivr.ivRank<30?'var(--green)':'var(--amber)',borderRadius:3}}/>
+                      </div>
+                      <div className="font-mono text-dim" style={{fontSize:10,marginTop:4}}>Historical Vol: {ivr.historicalVol}%</div>
+                    </div>
+                    <div className="font-mono text-dim p-2 border border-border/50" style={{fontSize:10}}>
+                      {ivr.ivRank > 70 ? '📌 High IV Rank → Consider SELLING options: Short Straddle, Iron Condor, Covered Call' :
+                       ivr.ivRank < 30 ? '📌 Low IV Rank → Consider BUYING options: Long Straddle, Long Strangle, Debit Spreads' :
+                       '📌 Mid IV Rank → Neutral strategies work best: Bull/Bear Spreads, Calendar Spreads'}
+                    </div>
+                  </>
+                )}
+
+                {/* Theta decay calendar */}
+                <div>
+                  <div className="font-mono text-accent uppercase tracking-widest mb-2" style={{fontSize:10}}>THETA DECAY CALENDAR</div>
+                  <div className="font-mono text-dim" style={{fontSize:10,marginBottom:8}}>
+                    Time value erosion for ATM option (approx). Theta accelerates as expiry approaches.
+                  </div>
+                  <table style={{width:'100%',borderCollapse:'collapse'}}>
+                    <thead>
+                      <tr style={{borderBottom:'1px solid var(--border)'}}>
+                        {['Days to Expiry','Daily Theta%','Weekly Theta%','Strategy'].map(h=>(
+                          <th key={h} style={{padding:'6px 8px',textAlign:'left',fontSize:9,color:'var(--text3)',fontFamily:"'DM Mono',monospace",fontWeight:600}}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[
+                        [30,'0.3%','2.1%','Buy options — plenty of time'],
+                        [21,'0.4%','2.8%','Debit spreads favorable'],
+                        [14,'0.6%','4.2%','Theta picks up — be careful buying'],
+                        [7, '1.2%','8.4%','Sell options — time decay fast'],
+                        [3, '2.8%','—',  'Sell options — rapid decay'],
+                        [1, '8%+', '—',  'Extreme theta — only sell'],
+                      ].map(([d,dt,wt,strat])=>(
+                        <tr key={d} style={{borderBottom:'1px solid var(--border)22'}}>
+                          <td style={{padding:'6px 8px',fontFamily:"'DM Mono',monospace",fontSize:11,color:'var(--text)'}}>{d}d</td>
+                          <td style={{padding:'6px 8px',fontFamily:"'DM Mono',monospace",fontSize:11,color:'var(--red)'}}>{dt}</td>
+                          <td style={{padding:'6px 8px',fontFamily:"'DM Mono',monospace",fontSize:11,color:'var(--red)'}}>{wt}</td>
+                          <td style={{padding:'6px 8px',fontSize:10,color:'var(--text3)'}}>{strat}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )
+          })()}
+        </div>
+      )}
+
+      {/* SPREAD CALCULATOR TAB */}
+      {activeTab === 'spread' && <SpreadCalculator price={data?.price||0} atm={atm}/>}
+
     </div>
   )
+}
+
+function SpreadCalculator({ price, atm }) {
+  const [strategy, setStrategy] = React.useState('bull_call')
+  const [lowerStrike, setLower] = React.useState(atm - 100)
+  const [upperStrike, setUpper] = React.useState(atm + 100)
+  const [lowerPrem, setLowerP] = React.useState(200)
+  const [upperPrem, setUpperP] = React.useState(80)
+  const [lots, setLots] = React.useState(1)
+  const lotSize = 50 // NIFTY lot size
+
+  const calc = React.useMemo(()=>{
+    if (strategy === 'bull_call') {
+      const netDebit = lowerPrem - upperPrem
+      const maxProfit = (upperStrike - lowerStrike - netDebit) * lots * lotSize
+      const maxLoss   = netDebit * lots * lotSize
+      const breakeven = lowerStrike + netDebit
+      return { netDebit, maxProfit, maxLoss, breakeven, type:'Debit' }
+    } else if (strategy === 'bear_put') {
+      const netDebit = upperPrem - lowerPrem
+      const maxProfit = (upperStrike - lowerStrike - netDebit) * lots * lotSize
+      const maxLoss   = netDebit * lots * lotSize
+      const breakeven = upperStrike - netDebit
+      return { netDebit, maxProfit, maxLoss, breakeven, type:'Debit' }
+    } else if (strategy === 'bull_put') {
+      const netCredit = upperPrem - lowerPrem
+      const maxProfit = netCredit * lots * lotSize
+      const maxLoss   = (upperStrike - lowerStrike - netCredit) * lots * lotSize
+      const breakeven = upperStrike - netCredit
+      return { netCredit, maxProfit, maxLoss, breakeven, type:'Credit' }
+    } else { // bear_call
+      const netCredit = lowerPrem - upperPrem
+      const maxProfit = netCredit * lots * lotSize
+      const maxLoss   = (upperStrike - lowerStrike - netCredit) * lots * lotSize
+      const breakeven = lowerStrike + netCredit
+      return { netCredit, maxProfit, maxLoss, breakeven, type:'Credit' }
+    }
+  },[strategy,lowerStrike,upperStrike,lowerPrem,upperPrem,lots])
+
+  const fc2 = n => `₹${Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:0,maximumFractionDigits:0})}`
+  const rr = calc.maxLoss > 0 ? (calc.maxProfit/calc.maxLoss).toFixed(2) : '∞'
+
+  return (
+    <div className="p-3 flex flex-col gap-3">
+      <div className="font-mono text-accent uppercase tracking-widest" style={{fontSize:10}}>Options Spread Calculator</div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+        {[['bull_call','Bull Call Spread'],['bear_put','Bear Put Spread'],['bull_put','Bull Put Spread'],['bear_call','Bear Call Spread']].map(([id,label])=>(
+          <button key={id} onClick={()=>setStrategy(id)} style={{
+            padding:'7px',borderRadius:6,border:'none',cursor:'pointer',fontSize:11,textAlign:'left',
+            background:strategy===id?'var(--accent)':'var(--surface2)',
+            color:strategy===id?'#fff':'var(--text2)',transition:'all .15s',
+          }}>{label}</button>
+        ))}
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+        {[
+          ['Lower Strike',lowerStrike,setLower],['Upper Strike',upperStrike,setUpper],
+          ['Lower Premium',lowerPrem,setLowerP],['Upper Premium',upperPrem,setUpperP],
+        ].map(([label,val,set])=>(
+          <div key={label}>
+            <div className="font-mono text-dim" style={{fontSize:9,marginBottom:3}}>{label}</div>
+            <input type="number" value={val} onChange={e=>set(Number(e.target.value))}
+              style={{width:'100%',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:5,
+                color:'var(--text)',padding:'6px 10px',fontSize:13,outline:'none',fontFamily:"'DM Mono',monospace"}}/>
+          </div>
+        ))}
+      </div>
+      <div>
+        <div className="font-mono text-dim" style={{fontSize:9,marginBottom:3}}>Lots (1 lot = {lotSize} qty)</div>
+        <input type="number" value={lots} min={1} onChange={e=>setLots(Math.max(1,Number(e.target.value)))}
+          style={{width:80,background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:5,
+            color:'var(--text)',padding:'6px 10px',fontSize:13,outline:'none',fontFamily:"'DM Mono',monospace"}}/>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:4}}>
+        {[
+          {l:calc.type==='Debit'?'Net Debit':'Net Credit', v:fc2(calc.netDebit||calc.netCredit), c:'var(--accent2)'},
+          {l:'Breakeven', v:fc2(calc.breakeven), c:'var(--amber)'},
+          {l:'Max Profit', v:fc2(calc.maxProfit), c:'var(--green)'},
+          {l:'Max Loss',   v:fc2(calc.maxLoss),   c:'var(--red)'},
+        ].map(x=>(
+          <div key={x.l} style={{padding:'10px',background:'var(--surface2)',border:'1px solid var(--border)',borderRadius:8}}>
+            <div className="font-mono text-dim" style={{fontSize:9,marginBottom:3}}>{x.l}</div>
+            <div className="font-display font-bold" style={{fontSize:16,color:x.c}}>{x.v}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{padding:'10px',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:8,textAlign:'center'}}>
+        <div className="font-mono text-dim" style={{fontSize:10}}>Risk : Reward</div>
+        <div className="font-display font-bold" style={{fontSize:22,color:Number(rr)>=2?'var(--green)':Number(rr)>=1?'var(--amber)':'var(--red)'}}>1 : {rr}</div>
+      </div>
+    </div>
+  )
+}
+
 }

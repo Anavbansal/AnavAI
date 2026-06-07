@@ -166,6 +166,161 @@ function calcVWAP(candles) {
   return den ? +(num / den).toFixed(2) : (candles[candles.length-1]?.close ?? 0);
 }
 
+// VWAP Bands (±1σ, ±2σ) — anchored to intraday session
+function calcVWAPBands(candles) {
+  const IST_OFFSET = 5.5 * 60 * 60 * 1000;
+  const nowIST = Date.now() + IST_OFFSET;
+  const todayMidnightIST = Math.floor(nowIST / 86400000) * 86400000 - IST_OFFSET;
+  const src = candles.filter(c => c.timestamp >= todayMidnightIST);
+  const data = src.length >= 3 ? src : candles.slice(-30);
+  if (data.length < 2) return null;
+
+  let cumTpv = 0, cumVol = 0;
+  const tpArr = [], volArr = [];
+  for (const c of data) {
+    const tp = (c.high + c.low + c.close) / 3;
+    const v  = c.volume || 1;
+    cumTpv += tp * v; cumVol += v;
+    tpArr.push(tp); volArr.push(v);
+  }
+  const vwap = cumTpv / cumVol;
+
+  // Compute VWAP standard deviation
+  let variance = 0;
+  for (let i = 0; i < tpArr.length; i++) {
+    variance += volArr[i] * Math.pow(tpArr[i] - vwap, 2);
+  }
+  const sd = Math.sqrt(variance / cumVol);
+  return {
+    vwap:  +vwap.toFixed(2),
+    upper1:+(vwap + 1 * sd).toFixed(2),
+    lower1:+(vwap - 1 * sd).toFixed(2),
+    upper2:+(vwap + 2 * sd).toFixed(2),
+    lower2:+(vwap - 2 * sd).toFixed(2),
+  };
+}
+
+// Opening Range Breakout (ORB) — first 15 minutes high/low
+function calcORB(candles) {
+  const IST_OFFSET = 5.5 * 60 * 60 * 1000;
+  const nowIST = Date.now() + IST_OFFSET;
+  const todayMidnightIST = Math.floor(nowIST / 86400000) * 86400000 - IST_OFFSET;
+  const marketOpen = todayMidnightIST + (9 * 60 + 15) * 60000;
+  const orbEnd     = marketOpen + 15 * 60000; // 9:15–9:30
+  const orbEnd30   = marketOpen + 30 * 60000; // 9:15–9:45
+  const orbEnd60   = marketOpen + 60 * 60000; // 9:15–10:15
+
+  const orbCandles15 = candles.filter(c => c.timestamp >= marketOpen && c.timestamp < orbEnd);
+  const orbCandles30 = candles.filter(c => c.timestamp >= marketOpen && c.timestamp < orbEnd30);
+  const orbCandles60 = candles.filter(c => c.timestamp >= marketOpen && c.timestamp < orbEnd60);
+
+  const calcRange = (cc) => cc.length > 0 ? {
+    high: +Math.max(...cc.map(c=>c.high)).toFixed(2),
+    low:  +Math.min(...cc.map(c=>c.low)).toFixed(2),
+    range:+(Math.max(...cc.map(c=>c.high))-Math.min(...cc.map(c=>c.low))).toFixed(2),
+  } : null;
+
+  const orb15 = calcRange(orbCandles15);
+  const orb30 = calcRange(orbCandles30);
+  const orb60 = calcRange(orbCandles60);
+
+  if (!orb15 && !orb30 && !orb60) return null;
+  const best = orb15 || orb30 || orb60;
+
+  // ORB signal
+  const lastClose = candles[candles.length-1]?.close || 0;
+  const signal = best ? (lastClose > best.high ? 'BULLISH_BREAKOUT' :
+                         lastClose < best.low  ? 'BEARISH_BREAKDOWN' : 'INSIDE') : null;
+  return { orb15, orb30, orb60, signal, lastClose };
+}
+
+// Previous Day High/Low (PDH/PDL) — key intraday S/R
+function calcPDHPDL(candles) {
+  const IST_OFFSET = 5.5 * 60 * 60 * 1000;
+  const nowIST = Date.now() + IST_OFFSET;
+  const todayMidnightIST = Math.floor(nowIST / 86400000) * 86400000 - IST_OFFSET;
+  const prevDayStart = todayMidnightIST - 86400000;
+
+  const prevCandles = candles.filter(c => c.timestamp >= prevDayStart && c.timestamp < todayMidnightIST);
+  if (prevCandles.length === 0) {
+    // Use last 10% of candles as "previous session"
+    const prev = candles.slice(0, Math.floor(candles.length * 0.3));
+    if (!prev.length) return null;
+    return {
+      pdh: +Math.max(...prev.map(c=>c.high)).toFixed(2),
+      pdl: +Math.min(...prev.map(c=>c.low)).toFixed(2),
+      pdc: +prev[prev.length-1].close.toFixed(2),
+    };
+  }
+  return {
+    pdh: +Math.max(...prevCandles.map(c=>c.high)).toFixed(2),
+    pdl: +Math.min(...prevCandles.map(c=>c.low)).toFixed(2),
+    pdc: +prevCandles[prevCandles.length-1].close.toFixed(2),
+  };
+}
+
+// Pre-market gap analysis
+function calcGapAnalysis(candles, pdhdpl) {
+  if (!pdhdpl) return null;
+  const today = candles[candles.length-1];
+  const firstCandle = candles[Math.max(0,candles.length-50)];
+  const todayOpen = firstCandle?.open || today?.open || 0;
+  const gap = +(todayOpen - pdhdpl.pdc).toFixed(2);
+  const gapPct = pdhdpl.pdc > 0 ? +((gap / pdhdpl.pdc)*100).toFixed(2) : 0;
+  return {
+    gapPoints: gap, gapPct,
+    type: Math.abs(gapPct) < 0.1 ? 'FLAT' :
+          gapPct > 1   ? 'GAP_UP_STRONG' :
+          gapPct > 0.3 ? 'GAP_UP' :
+          gapPct < -1  ? 'GAP_DOWN_STRONG' :
+          gapPct < -0.3? 'GAP_DOWN' : 'MINOR_GAP',
+    filled: Math.abs(today?.close - pdhdpl.pdc) < (Math.abs(gap)*0.5),
+    prevClose: pdhdpl.pdc,
+  };
+}
+
+// Volume comparison — today vs N-day average
+function calcVolumeComparison(candles) {
+  if (!candles || candles.length < 5) return null;
+  const IST_OFFSET = 5.5 * 60 * 60 * 1000;
+  const nowIST = Date.now() + IST_OFFSET;
+  const todayMidnightIST = Math.floor(nowIST / 86400000) * 86400000 - IST_OFFSET;
+  const todayVol = candles.filter(c=>c.timestamp>=todayMidnightIST).reduce((s,c)=>s+c.volume,0);
+  const recentVol = candles.slice(-100).reduce((s,c)=>s+c.volume,0) / Math.max(candles.slice(-100).length,1);
+  const ratio = recentVol > 0 ? +(todayVol / recentVol).toFixed(2) : 1;
+  return {
+    todayVol, avgVol: +recentVol.toFixed(0), ratio,
+    signal: ratio > 2 ? 'VERY_HIGH' : ratio > 1.4 ? 'HIGH' : ratio > 0.8 ? 'NORMAL' : 'LOW',
+  };
+}
+
+// Circuit limits (NSE standard)
+function calcCircuitLimits(price) {
+  if (!price || price <= 0) return null;
+  return {
+    upper5:  +(price * 1.05).toFixed(2),
+    lower5:  +(price * 0.95).toFixed(2),
+    upper10: +(price * 1.10).toFixed(2),
+    lower10: +(price * 0.90).toFixed(2),
+    upper20: +(price * 1.20).toFixed(2),
+    lower20: +(price * 0.80).toFixed(2),
+  };
+}
+
+// IV Rank & IV Percentile (approx from ATR)
+function calcIVRank(candles, currentIV) {
+  if (!candles || candles.length < 20 || !currentIV) return null;
+  // Approximate historical vol from daily returns
+  const closes = candles.slice(-252).map(c=>c.close);
+  const returns = [];
+  for (let i=1;i<closes.length;i++) {
+    returns.push(Math.log(closes[i]/closes[i-1]));
+  }
+  const annualVol = (Math.sqrt(returns.reduce((s,r)=>s+r*r,0)/returns.length)*Math.sqrt(252)*100);
+  const ivRank = Math.min(100, Math.max(0, ((currentIV - annualVol*0.5) / (annualVol*2 - annualVol*0.5))*100));
+  return { ivRank: +ivRank.toFixed(0), historicalVol: +annualVol.toFixed(1), currentIV };
+}
+
 // ATR — Wilder's smoothed method (same as TradingView default)
 function calcATR(candles, period = 14) {
   if (!candles || candles.length < 2) return 0;
@@ -1254,6 +1409,15 @@ async function buildRealAnalyzePayload(symbol, candles, ltpOverride) {
   const high52w = yr.length ? +Math.max(...yr.map(c=>c.high)).toFixed(2) : 0;
   const low52w  = yr.length ? +Math.min(...yr.map(c=>c.low)).toFixed(2)  : 0;
 
+  // New precision features
+  const vwapBands    = calcVWAPBands(candles);
+  const orb          = calcORB(candles);
+  const pdhdpl       = calcPDHPDL(candles);
+  const gapAnalysis  = calcGapAnalysis(candles, pdhdpl);
+  const volComparison= calcVolumeComparison(candles);
+  const circuitLimits= calcCircuitLimits(price);
+  const ivData       = calcIVRank(candles, bb?.stdDev ? +(bb.stdDev/price*Math.sqrt(252)*100).toFixed(1) : null);
+
   const m1Trend  = summarizeTrend(candles, 3);
   const m5Trend  = summarizeTrend(candles, 8);
   const m15Trend = summarizeTrend(candles, 20);
@@ -1450,6 +1614,7 @@ ${JSON.stringify({
     analysis: aiAnalysis.summary, aiAnalysis,
     latestNews: [], optionSignal,
     candleData: candles, ema20Series: ema20Ser,
+    vwapBands, orb, pdhdpl, gapAnalysis, volComparison, circuitLimits, ivData,
     quality: {
       source: token && token.length > 50 ? "UPSTOX_LIVE" : "SANDBOX",
       candleCount: candles.length,
