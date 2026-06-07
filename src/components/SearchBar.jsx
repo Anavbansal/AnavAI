@@ -5,31 +5,25 @@ import { ALL_SYMBOLS } from '../data/symbols'
 // Symbol database imported from src/data/symbols.js (298+ stocks)
 const SYMBOLS = ALL_SYMBOLS
 
-// ─── Smart search function ────────────────────────────────────────────────────
+// ─── Smart local search ───────────────────────────────────────────────────────
 function smartSearch(query) {
   if (!query || query.trim().length < 1) return []
   const q = query.trim().toUpperCase()
-
   return SYMBOLS
     .map(sym => {
-      const sUpper = sym.s.toUpperCase()
-      const nUpper = sym.n.toUpperCase()
+      const sU = sym.s.toUpperCase(), nU = sym.n.toUpperCase()
       let score = 0
-
-      if (sUpper === q)                    score = 200  // exact symbol match
-      else if (sUpper.startsWith(q))       score = 150  // symbol starts with
-      else if (nUpper.startsWith(q))       score = 120  // name starts with
-      else if (sUpper.includes(q))         score = 80   // symbol contains
-      else if (nUpper.includes(q))         score = 50   // name contains
-      else return null                                   // no match
-
-      if (sym.seg === 'INDEX') score += 10  // boost indices
-      if (sym.seg === 'EQ')    score += 5
-
+      if (sU === q)               score = 200
+      else if (sU.startsWith(q))  score = 150
+      else if (nU.startsWith(q))  score = 120
+      else if (sU.includes(q))    score = 80
+      else if (nU.includes(q))    score = 50
+      else return null
+      if (sym.seg === 'INDEX') score += 10
       return { ...sym, score }
     })
     .filter(Boolean)
-    .sort((a, b) => b.score - a.score)
+    .sort((a,b) => b.score - a.score)
     .slice(0, 10)
 }
 
@@ -46,11 +40,42 @@ export default function SearchBar({ onAnalyze, loading }) {
   const inputRef = useRef(null)
   const listRef  = useRef(null)
 
-  // Instant search on every keystroke
+  // Instant search on every keystroke — local DB first, server for full NSE list
   useEffect(() => {
-    const r = smartSearch(query)
-    setResults(r)
+    if (!query.trim()) { setResults([]); return }
+    // Immediate local results
+    const local = smartSearch(query)
+    setResults(local)
     setHovered(-1)
+    // Also search server for full NSE results (debounced)
+    const t = setTimeout(async () => {
+      try {
+        const token = localStorage.getItem('upstox_access_token') || ''
+        const r = await fetch(
+          `${API_BASE_URL}/api/search?q=${encodeURIComponent(query.trim())}`,
+          { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+        )
+        const data = await r.json()
+        const serverResults = (data.results || []).map(item => ({
+          s: item.tradingSymbol || item.symbol || '',
+          n: item.name || item.shortName || '',
+          e: item.exchange || 'NSE',
+          seg: (item.segment || '').replace('NSE_','').replace('BSE_','') || 'EQ',
+          k: item.instrumentKey || '',
+          fromServer: true,
+        })).filter(x => x.s)
+        // Merge: local first, then server results not in local
+        const localSyms = new Set(local.map(l => l.s))
+        const merged = [
+          ...local,
+          ...serverResults.filter(sr => !localSyms.has(sr.s))
+        ].slice(0, 15)
+        setResults(merged)
+      } catch {
+        // Server unavailable — keep local results
+      }
+    }, 300)
+    return () => clearTimeout(t)
   }, [query])
 
   function select(sym) {

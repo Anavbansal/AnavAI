@@ -1511,19 +1511,85 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // ── /api/search?q= — symbol search ──────────────────────────────────────
+    // ── /api/search?q= — symbol search (multi-source) ───────────────────────
     if (req.method === "GET" && url.pathname === "/api/search") {
       const q = (url.searchParams.get("q") || "").trim().toUpperCase();
-      if (!q) {
+      if (!q || q.length < 1) {
         writeJson(req, res, 200, { results: [] });
         return;
       }
-      const matches = await searchUpstoxInstruments(token, q, {
-        exchanges: url.searchParams.get("exchanges") || "NSE,BSE",
-        segments: url.searchParams.get("segments") || "EQ,INDEX",
-        records: Math.min(Number(url.searchParams.get("records") || 15), 30),
-      });
-      writeJson(req, res, 200, { results: matches.map(formatSearchResult) });
+
+      let results = [];
+
+      // 1. Try Upstox search API if token available
+      if (token && token.length > 50) {
+        try {
+          const matches = await searchUpstoxInstruments(token, q, {
+            exchanges: "NSE,BSE", segments: "EQ,INDEX,FO",
+            records: 20,
+          });
+          if (matches.length > 0) {
+            results = matches.map(formatSearchResult);
+            console.log(`[Search] Upstox: ${results.length} results for "${q}"`);
+          }
+        } catch(e) {
+          console.warn("[Search] Upstox failed:", e.message);
+        }
+      }
+
+      // 2. Try NSE India search API (free, no auth — needs session cookie trick)
+      if (results.length < 5) {
+        try {
+          const nseSearchUrl = `https://www.nseindia.com/api/search?q=${encodeURIComponent(q)}&type=quotes&category=equities`;
+          const nseRes = await fetch(nseSearchUrl, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+              "Accept": "application/json",
+              "Referer": "https://www.nseindia.com/",
+              "Accept-Language": "en-US,en;q=0.9",
+              "sec-fetch-mode": "cors",
+              "sec-fetch-site": "same-origin",
+            },
+            signal: AbortSignal.timeout(5000)
+          });
+          if (nseRes.ok) {
+            const nseData = await nseRes.json();
+            const hits = nseData?.list || nseData?.data || [];
+            const nseResults = hits.slice(0,15).map(h => ({
+              symbol: h.symbol || h.nsCode || "",
+              tradingSymbol: h.symbol || h.nsCode || "",
+              name: h.companyName || h.name || "",
+              shortName: h.symbol || "",
+              instrumentKey: `NSE_EQ|${h.isin || h.symbol || ""}`,
+              exchange: "NSE",
+              segment: h.indexs?.includes("NSE") ? "NSE_EQ" : "NSE_EQ",
+              isin: h.isin || "",
+            })).filter(r => r.symbol);
+            if (nseResults.length > 0) {
+              results = [...results, ...nseResults.filter(nr => !results.find(r => r.symbol === nr.symbol))];
+              console.log(`[Search] NSE: +${nseResults.length} results for "${q}"`);
+            }
+          }
+        } catch(e) {
+          // NSE API often blocked — silent fail
+        }
+      }
+
+      // 3. Fallback: local symbol database (always works)
+      if (results.length === 0) {
+        results = localSearch(q).map(sym => ({
+          symbol: sym.trading_symbol,
+          tradingSymbol: sym.trading_symbol,
+          name: sym.name,
+          shortName: sym.trading_symbol,
+          instrumentKey: sym.instrument_key || `NSE_EQ|${sym.trading_symbol}`,
+          exchange: sym.exchange || "NSE",
+          segment: sym.segment || "NSE_EQ",
+        }));
+        console.log(`[Search] Local fallback: ${results.length} results for "${q}"`);
+      }
+
+      writeJson(req, res, 200, { results: results.slice(0, 15) });
       return;
     }
 
