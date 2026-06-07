@@ -355,6 +355,9 @@ export default function CandleChart({ data, ai, onTfChange, activeTfi }) {
   const [pan,       setPan]      = useState(0)
   const [crosshair, setCrosshair]= useState({x:-1,y:-1})
   const [size,      setSize]     = useState({w:800,h:300})
+  const [drawTool,  setDrawTool] = useState('none')
+  const [drawings,  setDrawings] = useState([])
+  const [drawing,   setDrawing]  = useState(null)
   const containerRef = useRef(null)
   const effectiveTfi = activeTfi !== undefined ? activeTfi : tfi
   const tf = TIMEFRAMES[effectiveTfi]
