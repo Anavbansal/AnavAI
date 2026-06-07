@@ -90,7 +90,7 @@ export default function PriceAlerts({ data }) {
         <div style={{fontSize:11,fontWeight:600,color:'var(--text3)',marginBottom:10,letterSpacing:.5,textTransform:'uppercase'}}>Set New Alert</div>
         <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
           <input value={form.symbol} onChange={e=>setForm(f=>({...f,symbol:e.target.value.toUpperCase()}))}
-            placeholder="Symbol (e.g. RELIANCE)" style={{flex:2,minWidth:120}} className="input"
+            placeholder="Symbol (e.g. RELIANCE)" className="input"
             style={{flex:2,minWidth:120,height:38,fontSize:13,fontFamily:"'DM Mono',monospace"}}/>
           <select value={form.type} onChange={e=>setForm(f=>({...f,type:e.target.value}))}
             style={{height:38,background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:6,
