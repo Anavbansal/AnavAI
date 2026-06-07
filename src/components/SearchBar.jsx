@@ -108,7 +108,7 @@ export default function SearchBar({ onAnalyze, loading }) {
                 <span className="anim-spin" style={{display:'inline-block',width:16,height:16,border:'2px solid rgba(255,255,255,.3)',borderTopColor:'#fff',borderRadius:'50%'}}/>
                 Analyzing…
               </span>
-            : '▶ Analyze'}
+            : <><span style={{display:'none'}}>▶ </span>Analyze</>}
         </button>
       </div>
 

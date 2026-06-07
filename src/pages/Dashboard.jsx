@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import Header from '../components/Header'
 import SearchBar from '../components/SearchBar'
 import PricePanel from '../components/PricePanel'
@@ -12,132 +12,139 @@ import MutualFunds from '../components/MutualFunds'
 import NewsPanel from '../components/NewsPanel'
 import CompanyFundamentals from '../components/CompanyFundamentals'
 import AIAssistant from '../components/AIAssistant'
-import { useAnalysis } from '../hooks/useAnalysis'
 import RiskCalculator from '../components/RiskCalculator'
 import MarketScanner from '../components/MarketScanner'
 import PriceAlerts from '../components/PriceAlerts'
 import EconomicCalendar from '../components/EconomicCalendar'
+import { useAnalysis } from '../hooks/useAnalysis'
 
-const TABS = [
-  {id:'overview',  label:'Overview',     icon:'📊'},
-  {id:'intraday',  label:'Intraday',     icon:'⚡'},
-  {id:'delivery',  label:'Delivery',     icon:'📦'},
-  {id:'fo',        label:'F&O Greeks',   icon:'⚙'},
-  {id:'scanner',   label:'Scanner',      icon:'📡'},
-  {id:'alerts',    label:'Alerts',       icon:'🔔'},
-  {id:'calendar',  label:'Calendar',     icon:'📅'},
-  {id:'risk',      label:'Risk Calc',    icon:'🎯'},
-  {id:'portfolio', label:'Portfolio',    icon:'💼'},
-  {id:'mf',        label:'Mutual Funds', icon:'🏦'},
+// Bottom nav tabs (mobile) — keep to 5 max
+const MOBILE_TABS = [
+  {id:'overview',  label:'Home',    icon:'📊'},
+  {id:'intraday',  label:'Intraday',icon:'⚡'},
+  {id:'scanner',   label:'Scanner', icon:'📡'},
+  {id:'alerts',    label:'Alerts',  icon:'🔔'},
+  {id:'portfolio', label:'More',    icon:'☰'},
 ]
 
-const MODE = {overview:'tech',intraday:'intraday',delivery:'delivery',fo:'fo',scanner:'tech',alerts:'tech',calendar:'tech',risk:'tech',portfolio:'tech',mf:'tech'}
+// All tabs for desktop tab bar
+const ALL_TABS = [
+  {id:'overview',  label:'Overview',    icon:'📊'},
+  {id:'intraday',  label:'Intraday',    icon:'⚡'},
+  {id:'delivery',  label:'Delivery',    icon:'📦'},
+  {id:'fo',        label:'F&O',         icon:'⚙'},
+  {id:'scanner',   label:'Scanner',     icon:'📡'},
+  {id:'alerts',    label:'Alerts',      icon:'🔔'},
+  {id:'calendar',  label:'Calendar',    icon:'📅'},
+  {id:'risk',      label:'Risk Calc',   icon:'🎯'},
+  {id:'portfolio', label:'Portfolio',   icon:'💼'},
+  {id:'mf',        label:'Mutual Funds',icon:'🏦'},
+]
+
+const NO_REFETCH = new Set(['portfolio','mf','scanner','alerts','calendar','risk'])
+const MODE = {overview:'tech',intraday:'intraday',delivery:'delivery',fo:'fo'}
+
+// Hook: detect mobile
+function useIsMobile() {
+  const [mob, setMob] = useState(window.innerWidth <= 768)
+  useEffect(() => {
+    const fn = () => setMob(window.innerWidth <= 768)
+    window.addEventListener('resize', fn)
+    return () => window.removeEventListener('resize', fn)
+  }, [])
+  return mob
+}
 
 export default function Dashboard() {
-  const [tab,  setTab]  = useState('overview')
-  const [sym,  setSym]  = useState('NIFTY')
+  const [tab,    setTab]    = useState('overview')
+  const [sym,    setSym]    = useState('NIFTY')
   const [curSym, setCurSym] = useState('NIFTY')
   const [curTf,  setCurTf]  = useState('5')
   const { data, ai, loading, error, analyze } = useAnalysis()
+  const isMobile = useIsMobile()
 
   // Read Upstox token from URL after OAuth redirect
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
+    const params  = new URLSearchParams(window.location.search)
     const token   = params.get('upstox_token')
     const refresh = params.get('upstox_refresh')
     const err     = params.get('upstox_error')
-
     if (token) {
       localStorage.setItem('upstox_access_token', token)
       if (refresh) localStorage.setItem('upstox_refresh_token', refresh)
       localStorage.setItem('upstox_token_ts', Date.now().toString())
-      // Clean URL
-      window.history.replaceState({}, '', '/dashboard')
-      console.log('✅ Upstox token saved!')
-    }
-    if (err) {
-      console.error('Upstox OAuth error:', decodeURIComponent(err))
       window.history.replaceState({}, '', '/dashboard')
     }
+    if (err) window.history.replaceState({}, '', '/dashboard')
     analyze('NIFTY','5','tech')
   }, [])
 
   function changeTab(t) {
     setTab(t)
-    if (['portfolio','mf','scanner','alerts','calendar','risk'].includes(t)) return
-    const mode = MODE[t]||'tech'
-    const tf   = t==='delivery'?'D':curTf
-    analyze(curSym, tf, mode)
+    if (NO_REFETCH.has(t)) return
+    analyze(curSym, t==='delivery'?'D':curTf, MODE[t]||'tech')
   }
 
   function handleAnalyze(input, tf='5') {
     const s = typeof input==='string' ? input : (input?.symbol||'NIFTY')
     setSym(s); setCurSym(input); setCurTf(tf)
-    const mode = MODE[tab]||'tech'
-    analyze(input, tab==='delivery'?'D':tf, mode)
+    analyze(input, tab==='delivery'?'D':tf, MODE[tab]||'tech')
   }
 
-  function handleTfChange(tf) {
-    setCurTf(tf)
-    analyze(curSym, tf, MODE[tab]||'tech')
-  }
-
-  function handleSelectSymbol(s) {
-    setSym(s); setCurSym(s)
-    analyze(s,'5','tech')
-    setTab('overview')
-    window.scrollTo({top:0,behavior:'smooth'})
-  }
+  function handleTfChange(tf) { setCurTf(tf); analyze(curSym, tf, MODE[tab]||'tech') }
+  function handleSelectSymbol(s) { setSym(s); setCurSym(s); analyze(s,'5','tech'); setTab('overview'); window.scrollTo({top:0,behavior:'smooth'}) }
 
   const ikey = data?.instrumentKey || ''
+  const G = {gap:12}
 
-  const G = {gap:14}
+  const chart = <CandleChart data={data} ai={ai} onTfChange={handleTfChange}/>
+  const insights = <AIInsights ai={ai} data={data} loading={loading}/>
+  const news = <NewsPanel symbol={sym} instrumentKey={ikey}/>
 
   return (
     <div style={{minHeight:'100vh',display:'flex',flexDirection:'column',background:'var(--bg)'}}>
       <Header/>
 
-      <main style={{flex:1,padding:'16px 20px',display:'flex',flexDirection:'column',gap:14,maxWidth:1600,margin:'0 auto',width:'100%'}}>
+      <main className="main-content" style={{flex:1,padding:'12px 16px',display:'flex',flexDirection:'column',gap:12,maxWidth:1600,margin:'0 auto',width:'100%'}}>
 
         {/* Search */}
         <SearchBar onAnalyze={handleAnalyze} loading={loading}/>
 
-        {/* Tabs */}
-        <div style={{display:'flex',alignItems:'center',gap:12}}>
-          <div className="tab-bar">
-            {TABS.map(t=>(
-              <button key={t.id} className={`tab-btn ${tab===t.id?'active':''}`}
-                onClick={()=>changeTab(t.id)}
-                style={{display:'flex',alignItems:'center',gap:5}}>
-                <span>{t.icon}</span>{t.label}
-              </button>
-            ))}
-          </div>
-          {data && (
-            <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:8,fontSize:12,color:'var(--text3)'}}>
-              <span style={{fontFamily:"'DM Mono',monospace"}}>{data.symbol}</span>
-              <span style={{width:4,height:4,borderRadius:'50%',background:'var(--text3)'}}/>
-              <span style={{fontFamily:"'DM Mono',monospace",color:data.quality?.source==='UPSTOX_LIVE'?'var(--green)':'var(--amber)'}}>
-                {data.quality?.source==='UPSTOX_LIVE'?'● Live':'● Data'}
-              </span>
+        {/* Desktop tab bar */}
+        {!isMobile && (
+          <div style={{display:'flex',alignItems:'center',gap:12}}>
+            <div className="tab-bar">
+              {ALL_TABS.map(t=>(
+                <button key={t.id} className={`tab-btn ${tab===t.id?'active':''}`}
+                  onClick={()=>changeTab(t.id)}
+                  style={{display:'flex',alignItems:'center',gap:4}}>
+                  <span style={{fontSize:13}}>{t.icon}</span>
+                  <span>{t.label}</span>
+                </button>
+              ))}
             </div>
-          )}
-        </div>
-
-        {/* Error */}
-        {error && (
-          <div style={{padding:'10px 14px',background:'#f43f5e10',border:'1px solid #f43f5e33',borderRadius:8,color:'var(--red)',fontSize:13}}>
-            ⚠ {error}
+            {data && (
+              <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:6,fontSize:11,color:'var(--text3)',flexShrink:0}}>
+                <span style={{fontFamily:"'DM Mono',monospace"}}>{data.symbol}</span>
+                <span style={{width:4,height:4,borderRadius:'50%',background:'var(--text3)'}}/>
+                <span style={{fontFamily:"'DM Mono',monospace",color:data.quality?.source==='UPSTOX_LIVE'?'var(--green)':'var(--amber)'}}>
+                  {data.quality?.source==='UPSTOX_LIVE'?'● Live':'● Data'}
+                </span>
+              </div>
+            )}
           </div>
         )}
 
+        {/* Error */}
+        {error && <div style={{padding:'10px 14px',background:'#f43f5e10',border:'1px solid #f43f5e33',borderRadius:8,color:'var(--red)',fontSize:13}}>⚠ {error}</div>}
+
         {/* Loading */}
         {loading && (
-          <div style={{display:'flex',alignItems:'center',gap:12,padding:20,background:'var(--surface)',borderRadius:12,border:'1px solid var(--border)'}}>
-            <div className="anim-spin" style={{width:22,height:22,border:'3px solid var(--border)',borderTopColor:'var(--accent)',borderRadius:'50%',flexShrink:0}}/>
+          <div style={{display:'flex',alignItems:'center',gap:12,padding:16,background:'var(--surface)',borderRadius:10,border:'1px solid var(--border)'}}>
+            <div className="anim-spin" style={{width:20,height:20,border:'3px solid var(--border)',borderTopColor:'var(--accent)',borderRadius:'50%',flexShrink:0}}/>
             <div>
-              <div style={{fontSize:14,fontWeight:600,color:'var(--text)'}}>Analyzing {sym}…</div>
-              <div style={{fontSize:12,color:'var(--text3)',marginTop:2}}>Fetching real-time data and running AI analysis</div>
+              <div style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>Analyzing {sym}…</div>
+              <div style={{fontSize:11,color:'var(--text3)',marginTop:1}}>Fetching real-time data and running AI analysis</div>
             </div>
           </div>
         )}
@@ -145,64 +152,112 @@ export default function Dashboard() {
         {/* ── OVERVIEW ── */}
         {tab==='overview' && !loading && (
           <div style={{display:'flex',flexDirection:'column',...G}}>
-            <div style={{display:'grid',gridTemplateColumns:'300px 1fr',...G}}>
-              <PricePanel data={data} ai={ai} loading={loading}/>
-              <CandleChart data={data} ai={ai} onTfChange={handleTfChange}/>
-            </div>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',...G}}>
-              <AIInsights ai={ai} data={data} loading={loading}/>
-              <NewsPanel symbol={sym} instrumentKey={ikey}/>
-            </div>
-            <CompanyFundamentals symbol={data?.symbol||sym} instrumentKey={ikey}/>
+            {/* Mobile: chart full width first, then price panel */}
+            {isMobile ? (
+              <>
+                {chart}
+                <PricePanel data={data} ai={ai} loading={loading}/>
+                {insights}
+                {news}
+                <CompanyFundamentals symbol={data?.symbol||sym} instrumentKey={ikey}/>
+              </>
+            ) : (
+              <>
+                <div style={{display:'grid',gridTemplateColumns:'300px 1fr',...G}}>
+                  <PricePanel data={data} ai={ai} loading={loading}/>
+                  {chart}
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',...G}}>
+                  {insights}
+                  {news}
+                </div>
+                <CompanyFundamentals symbol={data?.symbol||sym} instrumentKey={ikey}/>
+              </>
+            )}
           </div>
         )}
 
         {/* ── INTRADAY ── */}
         {tab==='intraday' && !loading && (
-          <div style={{display:'grid',gridTemplateColumns:'340px 1fr',...G}}>
-            <Intraday data={data} ai={ai}/>
+          isMobile ? (
             <div style={{display:'flex',flexDirection:'column',...G}}>
-              <CandleChart data={data} ai={ai} onTfChange={handleTfChange}/>
-              <AIInsights ai={ai} data={data} loading={loading}/>
+              {chart}
+              <Intraday data={data} ai={ai}/>
+              {insights}
             </div>
-          </div>
+          ) : (
+            <div style={{display:'grid',gridTemplateColumns:'340px 1fr',...G}}>
+              <Intraday data={data} ai={ai}/>
+              <div style={{display:'flex',flexDirection:'column',...G}}>{chart}{insights}</div>
+            </div>
+          )
         )}
 
         {/* ── DELIVERY ── */}
         {tab==='delivery' && !loading && (
-          <div style={{display:'grid',gridTemplateColumns:'340px 1fr',...G}}>
-            <Delivery data={data} ai={ai}/>
+          isMobile ? (
             <div style={{display:'flex',flexDirection:'column',...G}}>
-              <CandleChart data={data} ai={ai} onTfChange={handleTfChange}/>
-              <NewsPanel symbol={sym} instrumentKey={ikey}/>
+              {chart}
+              <Delivery data={data} ai={ai}/>
+              {news}
             </div>
-          </div>
+          ) : (
+            <div style={{display:'grid',gridTemplateColumns:'340px 1fr',...G}}>
+              <Delivery data={data} ai={ai}/>
+              <div style={{display:'flex',flexDirection:'column',...G}}>{chart}{news}</div>
+            </div>
+          )
         )}
 
         {/* ── F&O ── */}
         {tab==='fo' && !loading && (
           <div style={{display:'flex',flexDirection:'column',...G}}>
             <FOGreeks data={data}/>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',...G}}>
-              <AIInsights ai={ai} data={data} loading={loading}/>
-              <PricePanel data={data} ai={ai}/>
-            </div>
+            {isMobile ? <>{insights}<PricePanel data={data} ai={ai}/></> : (
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',...G}}>
+                {insights}<PricePanel data={data} ai={ai}/>
+              </div>
+            )}
           </div>
         )}
 
-        {tab==='scanner'   && <MarketScanner onSelectSymbol={handleSelectSymbol}/>}
-        {tab==='alerts'    && <PriceAlerts data={data}/>}
-        {tab==='calendar'  && <EconomicCalendar/>}
-        {tab==='risk'      && <RiskCalculator/>}
-        {tab==='portfolio' && <Portfolio onSelectSymbol={handleSelectSymbol}/>}
-        {tab==='mf' && <MutualFunds/>}
+        {tab==='scanner'  && <MarketScanner onSelectSymbol={handleSelectSymbol}/>}
+        {tab==='alerts'   && <PriceAlerts data={data}/>}
+        {tab==='calendar' && <EconomicCalendar/>}
+        {tab==='risk'     && <RiskCalculator/>}
+        {tab==='portfolio'&& <Portfolio onSelectSymbol={handleSelectSymbol}/>}
+        {tab==='mf'       && <MutualFunds/>}
+
       </main>
+
+      {/* ── Mobile bottom navigation ── */}
+      {isMobile && (
+        <nav className="mobile-nav">
+          {MOBILE_TABS.map(t=>(
+            <button key={t.id} className={`mobile-nav-item ${tab===t.id?'active':''}`}
+              onClick={()=>changeTab(t.id)}>
+              <span className="nav-icon">{t.icon}</span>
+              {t.label}
+            </button>
+          ))}
+        </nav>
+      )}
 
       <AIAssistant data={data} ai={ai}/>
 
-      <footer style={{textAlign:'center',padding:'12px 20px',borderTop:'1px solid var(--border)',fontSize:11,color:'var(--text3)',background:'var(--bg2)'}}>
-        ⚠ For personal educational use only · Not SEBI registered investment advice · Past performance ≠ future results
-      </footer>
+      {/* Mobile: move FAB above bottom nav */}
+      <style>{`
+        @media (max-width: 768px) {
+          .ai-fab { bottom: 70px !important; right: 14px !important; }
+          .ai-chat-panel { bottom: 134px !important; right: 8px !important; left: 8px !important; width: auto !important; }
+        }
+      `}</style>
+
+      {!isMobile && (
+        <footer style={{textAlign:'center',padding:'10px',borderTop:'1px solid var(--border)',fontSize:11,color:'var(--text3)',background:'var(--bg2)'}}>
+          ⚠ For personal educational use only · Not SEBI investment advice
+        </footer>
+      )}
     </div>
   )
 }

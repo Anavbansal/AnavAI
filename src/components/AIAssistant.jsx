@@ -179,7 +179,7 @@ export default function AIAssistant({ data, ai }) {
 
       {/* Chat panel */}
       {open && (
-        <div className="anim-slide" style={{
+        <div className="anim-slide ai-chat-panel" style={{
           position:'fixed', bottom:92, right:24, zIndex:9998,
           width:400, maxHeight:'80vh',
           background:'var(--surface)', border:'1px solid var(--bd2)',

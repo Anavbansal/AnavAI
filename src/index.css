@@ -254,3 +254,109 @@ hr { border: none; border-top: 1px solid var(--border); }
 .text-muted  { color: var(--text2); }
 .text-dim    { color: var(--text3); }
 
+
+/* ══════════════════════════════════════════════════════
+   RESPONSIVE / MOBILE STYLES
+   ══════════════════════════════════════════════════════ */
+
+/* ── Responsive grid helpers ──────────────────────────── */
+.grid-2col { display: grid; grid-template-columns: 300px 1fr; gap: 14px; }
+.grid-half { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.grid-side  { display: grid; grid-template-columns: 340px 1fr; gap: 14px; }
+
+/* ── Mobile bottom nav ──────────────────────────────────── */
+.mobile-nav {
+  display: none;
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 500;
+  background: var(--bg2); border-top: 1px solid var(--border);
+  padding: 6px 0 calc(6px + env(safe-area-inset-bottom));
+}
+.mobile-nav-item {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 2px; padding: 4px; border: none; background: none;
+  cursor: pointer; transition: all .15s;
+  color: var(--text3); font-size: 10px;
+  font-family: 'DM Sans', sans-serif; font-weight: 500;
+}
+.mobile-nav-item.active { color: var(--accent2); }
+.mobile-nav-item .nav-icon { font-size: 18px; line-height: 1; }
+
+/* ── Tablet (≤1024px) ─────────────────────────────────── */
+@media (max-width: 1024px) {
+  .grid-2col { grid-template-columns: 1fr; }
+  .grid-side  { grid-template-columns: 1fr; }
+  .grid-half  { grid-template-columns: 1fr; }
+}
+
+/* ── Mobile (≤768px) ──────────────────────────────────── */
+@media (max-width: 768px) {
+  /* Global */
+  body { font-size: 13px; }
+
+  /* Main padding */
+  .main-content {
+    padding: 10px 10px 80px !important;
+  }
+
+  /* Tab bar — scrollable horizontal */
+  .tab-bar {
+    overflow-x: auto; overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    flex-wrap: nowrap; gap: 2px;
+    scrollbar-width: none;
+  }
+  .tab-bar::-webkit-scrollbar { display: none; }
+  .tab-btn { font-size: 12px; padding: 5px 11px; white-space: nowrap; }
+
+  /* Mobile bottom nav */
+  .mobile-nav { display: flex; }
+  .desktop-tabs { display: none; }
+
+  /* Cards */
+  .card { border-radius: 8px; }
+  .card-header { padding: 10px 12px; }
+
+  /* Metrics grid — 2 col on mobile */
+  .metrics-grid { grid-template-columns: 1fr 1fr !important; }
+
+  /* Chart height */
+  .chart-mobile { min-height: 260px !important; }
+
+  /* Price panel — horizontal strip on mobile */
+  .price-panel-mobile {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr 1fr !important;
+    gap: 6px;
+  }
+
+  /* Data table — horizontal scroll */
+  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* Risk calculator grid */
+  .risk-grid { grid-template-columns: 1fr !important; }
+
+  /* Header */
+  .header-desktop { display: none !important; }
+  .header-mobile  { display: flex !important; }
+
+  /* AI assistant — full width on mobile */
+  .ai-chat-panel {
+    right: 8px !important; left: 8px !important;
+    width: auto !important; bottom: 80px !important;
+  }
+  .ai-fab { bottom: 76px !important; right: 16px !important; }
+
+  /* Portfolio table */
+  .portfolio-table { font-size: 11px; }
+  .portfolio-table th, .portfolio-table td { padding: 6px 8px; }
+}
+
+/* ── Small mobile (≤480px) ────────────────────────────── */
+@media (max-width: 480px) {
+  .main-content { padding: 8px 8px 76px !important; }
+  .num-lg { font-size: 22px !important; }
+  .metric-value { font-size: 13px !important; }
+  .verdict { font-size: 18px !important; letter-spacing: 2px !important; }
+  .card-header { padding: 8px 10px; }
+}
