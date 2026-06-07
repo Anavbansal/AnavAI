@@ -1902,6 +1902,191 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // ── /api/optionchain — Real NSE option chain (free, no token) ─────────────
+    if (req.method === "GET" && url.pathname === "/api/optionchain") {
+      const symbol = (url.searchParams.get("symbol") || "NIFTY").toUpperCase();
+      try {
+        // NSE free API — no auth needed
+        const headers = {
+          "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "Accept":"application/json","Referer":"https://www.nseindia.com",
+          "Accept-Language":"en-US,en;q=0.9",
+        };
+        // First hit homepage to get cookies
+        await fetch("https://www.nseindia.com", { headers }).catch(()=>{});
+        const ocRes = await fetch(
+          `https://www.nseindia.com/api/option-chain-indices?symbol=${symbol}`,
+          { headers, signal: AbortSignal.timeout(8000) }
+        );
+        if (ocRes.ok) {
+          const ocData = await ocRes.json();
+          const records = ocData?.records?.data || [];
+          const underlying = ocData?.records?.underlyingValue || 0;
+          const expiries = [...new Set(records.map(r=>r.expiryDate))].slice(0,5);
+          // Process option chain
+          const processed = records
+            .filter(r => r.expiryDate === expiries[0])
+            .map(r => ({
+              strike: r.strikePrice,
+              ce: r.CE ? { oi:r.CE.openInterest, coiChange:r.CE.changeinOpenInterest,
+                ltp:r.CE.lastPrice, iv:r.CE.impliedVolatility, vol:r.CE.totalTradedVolume,
+                delta:r.CE.delta||null, theta:r.CE.theta||null } : null,
+              pe: r.PE ? { oi:r.PE.openInterest, coiChange:r.PE.changeinOpenInterest,
+                ltp:r.PE.lastPrice, iv:r.PE.impliedVolatility, vol:r.PE.totalTradedVolume,
+                delta:r.PE.delta||null, theta:r.PE.theta||null } : null,
+            }));
+          // PCR, max pain
+          const totalCeOI = processed.reduce((s,r)=>s+(r.ce?.oi||0),0);
+          const totalPeOI = processed.reduce((s,r)=>s+(r.pe?.oi||0),0);
+          const pcr = totalCeOI > 0 ? +(totalPeOI/totalCeOI).toFixed(3) : 0;
+          // Max pain = strike with max total OI loss
+          let maxPain = 0, minLoss = Infinity;
+          for (const row of processed) {
+            const strike = row.strike;
+            let loss = 0;
+            for (const r of processed) {
+              if (r.ce?.oi) loss += Math.max(0, r.strike - strike) * r.ce.oi;
+              if (r.pe?.oi) loss += Math.max(0, strike - r.strike) * r.pe.oi;
+            }
+            if (loss < minLoss) { minLoss=loss; maxPain=strike; }
+          }
+          writeJson(req, res, 200, {
+            status:"success", symbol, underlying, expiries,
+            data: processed, pcr, maxPain, _source:"NSE_LIVE",
+          });
+        } else {
+          writeJson(req, res, 200, { status:"error", message:"NSE API unavailable", _source:"NSE_FAIL" });
+        }
+      } catch(e) {
+        console.warn("[OptionChain] NSE fetch failed:", e.message);
+        writeJson(req, res, 200, { status:"error", message:e.message });
+      }
+      return;
+    }
+
+    // ── /api/patterns — Advanced chart pattern recognition ───────────────────
+    if (req.method === "POST" && url.pathname === "/api/patterns") {
+      const body = await readBody(req);
+      const candles = Array.isArray(body.candles) ? body.candles : [];
+      if (candles.length < 20) {
+        writeJson(req, res, 200, { patterns:[] }); return;
+      }
+      const patterns = [];
+      const n = candles.length;
+      const closes = candles.map(c=>c.close);
+      const highs  = candles.map(c=>c.high);
+      const lows   = candles.map(c=>c.low);
+      const avg    = arr => arr.reduce((a,b)=>a+b,0)/arr.length;
+      const price  = closes[n-1];
+
+      // ── Head & Shoulders ──
+      if (n >= 30) {
+        const seg = closes.slice(-30);
+        const mid = Math.floor(seg.length/2);
+        const leftPeak  = Math.max(...seg.slice(0, mid-3));
+        const head      = Math.max(...seg.slice(mid-4, mid+4));
+        const rightPeak = Math.max(...seg.slice(mid+3));
+        const neckline  = (Math.min(...seg.slice(0,mid)) + Math.min(...seg.slice(mid))) / 2;
+        if (head > leftPeak*1.02 && head > rightPeak*1.02 &&
+            Math.abs(leftPeak-rightPeak)/rightPeak < 0.05 &&
+            price < neckline*1.01) {
+          patterns.push({ name:"Head & Shoulders", type:"BEARISH", confidence:74,
+            description:`Classic reversal — head at ₹${Math.round(head).toLocaleString('en-IN')}, neckline ₹${Math.round(neckline).toLocaleString('en-IN')}. Target: ₹${Math.round(neckline-(head-neckline)).toLocaleString('en-IN')}` });
+        }
+      }
+
+      // ── Double Top ──
+      if (n >= 20) {
+        const seg = closes.slice(-20);
+        const half = Math.floor(seg.length/2);
+        const peak1 = Math.max(...seg.slice(0, half));
+        const peak2 = Math.max(...seg.slice(half));
+        const trough = Math.min(...seg.slice(half-4, half+4));
+        if (Math.abs(peak1-peak2)/peak1 < 0.02 && peak1 > trough*1.03 && price < trough*1.01) {
+          patterns.push({ name:"Double Top", type:"BEARISH", confidence:70,
+            description:`Two peaks near ₹${Math.round(peak1).toLocaleString('en-IN')}. Bearish reversal confirmed below ₹${Math.round(trough).toLocaleString('en-IN')}` });
+        }
+      }
+
+      // ── Double Bottom ──
+      if (n >= 20) {
+        const seg = closes.slice(-20);
+        const half = Math.floor(seg.length/2);
+        const bot1 = Math.min(...seg.slice(0, half));
+        const bot2 = Math.min(...seg.slice(half));
+        const peak = Math.max(...seg.slice(half-4, half+4));
+        if (Math.abs(bot1-bot2)/bot1 < 0.02 && bot1 < peak*0.97 && price > peak*0.99) {
+          patterns.push({ name:"Double Bottom", type:"BULLISH", confidence:72,
+            description:`Two lows near ₹${Math.round(bot1).toLocaleString('en-IN')}. Bullish reversal confirmed above ₹${Math.round(peak).toLocaleString('en-IN')}` });
+        }
+      }
+
+      // ── Cup & Handle ──
+      if (n >= 40) {
+        const seg = closes.slice(-40);
+        const leftRim  = seg[0];
+        const cupLow   = Math.min(...seg.slice(5, 35));
+        const rightRim = Math.max(...seg.slice(33, 38));
+        const handle   = Math.min(...seg.slice(37));
+        if (Math.abs(leftRim-rightRim)/leftRim < 0.03 &&
+            cupLow < leftRim*0.92 && handle > cupLow &&
+            handle < rightRim && price >= rightRim*0.99) {
+          patterns.push({ name:"Cup & Handle", type:"BULLISH", confidence:78,
+            description:`Bullish continuation. Cup depth ₹${Math.round(leftRim-cupLow).toLocaleString('en-IN')}. Target: ₹${Math.round(rightRim+(leftRim-cupLow)).toLocaleString('en-IN')}` });
+        }
+      }
+
+      // ── Rising/Falling Wedge ──
+      if (n >= 15) {
+        const seg15 = closes.slice(-15);
+        const h15   = highs.slice(-15);
+        const l15   = lows.slice(-15);
+        const highSlope = (h15[14]-h15[0])/14;
+        const lowSlope  = (l15[14]-l15[0])/14;
+        if (highSlope > 0 && lowSlope > 0 && lowSlope > highSlope) {
+          patterns.push({ name:"Rising Wedge", type:"BEARISH", confidence:65,
+            description:"Converging higher highs and higher lows — bearish reversal pattern" });
+        } else if (highSlope < 0 && lowSlope < 0 && highSlope > lowSlope) {
+          patterns.push({ name:"Falling Wedge", type:"BULLISH", confidence:65,
+            description:"Converging lower highs and lower lows — bullish reversal/continuation" });
+        }
+      }
+
+      // ── Bullish/Bearish Flag ──
+      if (n >= 20) {
+        const pole  = closes.slice(-20,-10);
+        const flag  = closes.slice(-10);
+        const poleMove = (pole[pole.length-1]-pole[0])/pole[0]*100;
+        const flagHigh = Math.max(...flag), flagLow = Math.min(...flag);
+        const flagRange = (flagHigh-flagLow)/flagHigh*100;
+        if (poleMove > 5 && flagRange < 3) {
+          patterns.push({ name:"Bull Flag", type:"BULLISH", confidence:68,
+            description:`Strong pole (+${poleMove.toFixed(1)}%) then tight consolidation. Breakout target: ₹${Math.round(price*1+(price*(poleMove/100))).toLocaleString('en-IN')}` });
+        } else if (poleMove < -5 && flagRange < 3) {
+          patterns.push({ name:"Bear Flag", type:"BEARISH", confidence:68,
+            description:`Sharp drop (${poleMove.toFixed(1)}%) then tight consolidation. Breakdown target: ₹${Math.round(price*(1+(poleMove/100))).toLocaleString('en-IN')}` });
+        }
+      }
+
+      // ── Golden/Death Cross ──
+      if (n >= 55) {
+        const ema20Now  = avg(closes.slice(-1));
+        const ema50Now  = avg(closes.slice(-50,-1));
+        const ema20Prev = avg(closes.slice(-6,-5));
+        const ema50Prev = avg(closes.slice(-55,-50));
+        if (ema20Now > ema50Now && ema20Prev <= ema50Prev) {
+          patterns.push({ name:"Golden Cross", type:"BULLISH", confidence:80,
+            description:"EMA20 crossed above EMA50 — strong bullish signal" });
+        } else if (ema20Now < ema50Now && ema20Prev >= ema50Prev) {
+          patterns.push({ name:"Death Cross", type:"BEARISH", confidence:80,
+            description:"EMA20 crossed below EMA50 — strong bearish signal" });
+        }
+      }
+
+      writeJson(req, res, 200, { patterns, count:patterns.length });
+      return;
+    }
+
     // ── /api/assistant — AI Trading Assistant with live stock fetch ──────────
     if (req.method === "POST" && url.pathname === "/api/assistant") {
       const body        = await readBody(req);
