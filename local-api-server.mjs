@@ -872,14 +872,14 @@ function getCorsOrigin(req) {
 }
 
 function writeJson(req, res, statusCode, body) {
-  const corsOrigin = getCorsOrigin(req);
+  const origin = req.headers.origin || '*';
   res.writeHead(statusCode, {
-    "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": corsOrigin,
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, x-tunnel-authorization, x-forwarded-for, x-real-ip",
-    "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
+    "Content-Type":                     "application/json",
+    "Access-Control-Allow-Origin":      origin,
+    "Access-Control-Allow-Headers":     "Content-Type, Authorization, x-tunnel-authorization",
+    "Access-Control-Allow-Methods":     "GET,POST,PUT,DELETE,OPTIONS",
     "Access-Control-Allow-Credentials": "true",
-    "Vary": "Origin",
+    "Vary":                             "Origin",
   });
   res.end(JSON.stringify(body));
 }
@@ -1461,7 +1461,20 @@ ${JSON.stringify({
 
 // ─── HTTP Server ─────────────────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
-  if (req.method === "OPTIONS") { writeJson(req, res, 200, { ok: true }); return; }
+  // ── CORS — handle preflight for ALL routes ──────────────────────────────
+  const corsOrigin = req.headers.origin || '*';
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, {
+      "Access-Control-Allow-Origin":      corsOrigin,
+      "Access-Control-Allow-Headers":     "Content-Type, Authorization, x-tunnel-authorization",
+      "Access-Control-Allow-Methods":     "GET,POST,PUT,DELETE,OPTIONS",
+      "Access-Control-Allow-Credentials": "true",
+      "Access-Control-Max-Age":           "86400",
+      "Vary":                             "Origin",
+    });
+    res.end();
+    return;
+  }
   const url   = new URL(req.url, `http://0.0.0.0:${PORT}`);
   const token = getToken(req);
 
@@ -1640,7 +1653,7 @@ const server = http.createServer(async (req, res) => {
 
       if (error || !code) {
         const msg = encodeURIComponent(error || "No code received");
-        res.writeHead(302, { Location: `${frontendUrl}/dashboard?upstox_error=${msg}` });
+        res.writeHead(302, { "Location": `${frontendUrl}/dashboard?upstox_error=${msg}`, "Access-Control-Allow-Origin": req.headers.origin||"*" });
         res.end(); return;
       }
 
