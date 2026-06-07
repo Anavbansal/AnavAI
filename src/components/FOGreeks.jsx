@@ -521,5 +521,3 @@ function SpreadCalculator({ price, atm }) {
     </div>
   )
 }
-
-}
