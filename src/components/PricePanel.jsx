@@ -18,7 +18,7 @@ function Ring({ pct, color }) {
   )
 }
 
-export default function PricePanel({ data, ai, loading }) {
+function PricePanel({ data, ai, loading }) {
   // Live WebSocket price override
   const { priceData, connected } = useLivePrice(data?.symbol)
   const livePrice    = priceData?.price     || data?.price     || 0
@@ -198,3 +198,5 @@ export default function PricePanel({ data, ai, loading }) {
     </div>
   )
 }
+
+export default React.memo(PricePanel)

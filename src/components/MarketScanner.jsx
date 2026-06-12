@@ -34,7 +34,7 @@ const INDICES = [
   {name:'NIFTY AUTO',val:22140, chg:2.14},{name:'NIFTY FMCG', val:56230,chg:-0.31},
 ]
 
-export default function MarketScanner({ onSelectSymbol }) {
+function MarketScanner({ onSelectSymbol }) {
   const [tab, setTab] = useState('gainers')
   const [filter, setFilter] = useState('')
 
@@ -136,3 +136,5 @@ export default function MarketScanner({ onSelectSymbol }) {
     </div>
   )
 }
+
+export default React.memo(MarketScanner)

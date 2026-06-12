@@ -2,21 +2,38 @@ import React, { useState, useEffect, useRef } from 'react'
 import Header from '../components/Header'
 import SearchBar from '../components/SearchBar'
 import PricePanel from '../components/PricePanel'
-import CandleChart from '../components/CandleChart'
+import { lazy, Suspense } from 'react'
+
+// Always loaded (critical path)
 import AIInsights from '../components/AIInsights'
-import Intraday from '../components/Intraday'
-import Delivery from '../components/Delivery'
-import FOGreeks from '../components/FOGreeks'
-import Portfolio from '../components/Portfolio'
-import MutualFunds from '../components/MutualFunds'
 import NewsPanel from '../components/NewsPanel'
-import CompanyFundamentals from '../components/CompanyFundamentals'
-import AIAssistant from '../components/AIAssistant'
-import RiskCalculator from '../components/RiskCalculator'
-import MarketScanner from '../components/MarketScanner'
-import PriceAlerts from '../components/PriceAlerts'
-import EconomicCalendar from '../components/EconomicCalendar'
-import PersonalFinance from '../components/PersonalFinance'
+
+// Lazy loaded (heavy components)
+const CandleChart        = lazy(() => import('../components/CandleChart'))
+const Intraday           = lazy(() => import('../components/Intraday'))
+const Delivery           = lazy(() => import('../components/Delivery'))
+const FOGreeks           = lazy(() => import('../components/FOGreeks'))
+const Portfolio          = lazy(() => import('../components/Portfolio'))
+const MutualFunds        = lazy(() => import('../components/MutualFunds'))
+const CompanyFundamentals= lazy(() => import('../components/CompanyFundamentals'))
+const AIAssistant        = lazy(() => import('../components/AIAssistant'))
+const RiskCalculator     = lazy(() => import('../components/RiskCalculator'))
+const MarketScanner      = lazy(() => import('../components/MarketScanner'))
+const PriceAlerts        = lazy(() => import('../components/PriceAlerts'))
+const EconomicCalendar   = lazy(() => import('../components/EconomicCalendar'))
+const PersonalFinance    = lazy(() => import('../components/PersonalFinance'))
+
+// Suspense fallback
+function TabLoader() {
+  return (
+    <div style={{display:'flex',alignItems:'center',justifyContent:'center',
+      height:200,gap:12,color:'var(--text3)'}}>
+      <div className="anim-spin" style={{width:20,height:20,border:'3px solid var(--border)',
+        borderTopColor:'var(--accent)',borderRadius:'50%'}}/>
+      <span style={{fontSize:13}}>Loading...</span>
+    </div>
+  )
+}
 import { useAnalysis } from '../hooks/useAnalysis'
 import { useLivePrice } from '../hooks/useLivePrice'
 
@@ -93,18 +110,18 @@ export default function Dashboard() {
     analyze(curSym, t==='delivery'?'D':curTf, MODE[t]||'tech')
   }
 
-  function handleAnalyze(input, tf='5') {
-    const s = typeof input==='string' ? input : (input?.symbol||'NIFTY')
-    setSym(s); setCurSym(input); setCurTf(tf)
+  const handleAnalyze = useCallback((input, tf='5') => {
+    const s2 = typeof input==='string' ? input : (input?.symbol||'NIFTY')
+    setSym(s2); setCurSym(input); setCurTf(tf)
     analyze(input, tab==='delivery'?'D':tf, MODE[tab]||'tech')
-  }
+  }, [analyze, tab])
 
   function handleTfChange(tf, tfi) {
     setCurTf(tf)
     if (tfi !== undefined) setCurTfi(tfi)
     analyze(curSym, tf, MODE[tab]||'tech')
   }
-  function handleSelectSymbol(s) { setSym(s); setCurSym(s); analyze(s,'5','tech'); setTab('overview'); window.scrollTo({top:0,behavior:'smooth'}) }
+  const handleSelectSymbol = useCallback((s) => { setSym(s); setCurSym(s); analyze(s,'5','tech'); setTab('overview'); window.scrollTo({top:0,behavior:'smooth'}) }, [analyze])
 
   const ikey = data?.instrumentKey || ''
   const G = {gap:12}
@@ -233,12 +250,12 @@ export default function Dashboard() {
           </div>
         )}
 
-        {tab==='scanner'  && <MarketScanner onSelectSymbol={handleSelectSymbol}/>}
-        {tab==='alerts'   && <PriceAlerts data={data}/>}
-        {tab==='calendar' && <EconomicCalendar/>}
-        {tab==='risk'     && <RiskCalculator/>}
-        {tab==='portfolio'&& <Portfolio onSelectSymbol={handleSelectSymbol}/>}
-        {tab==='pf'        && <PersonalFinance/>}
+        {tab==='scanner'  && <Suspense fallback={<TabLoader/>}><MarketScanner onSelectSymbol={handleSelectSymbol}/></Suspense>}
+        {tab==='alerts'   && <Suspense fallback={<TabLoader/>}><PriceAlerts data={data}/></Suspense>}
+        {tab==='calendar' && <Suspense fallback={<TabLoader/>}><EconomicCalendar/></Suspense>}
+        {tab==='risk'     && <Suspense fallback={<TabLoader/>}><RiskCalculator/></Suspense>}
+        {tab==='portfolio'&& <Suspense fallback={<TabLoader/>}><Portfolio onSelectSymbol={handleSelectSymbol}/></Suspense>}
+        {tab==='pf'        && <Suspense fallback={<TabLoader/>}><PersonalFinance/></Suspense>}
         {tab==='mf'       && <MutualFunds/>}
 
       </main>
@@ -300,7 +317,7 @@ export default function Dashboard() {
         </>
       )}
 
-      <AIAssistant data={data} ai={ai}/>
+      <Suspense fallback={null}><AIAssistant data={data} ai={ai}/></Suspense>
 
       {/* Mobile: move FAB above bottom nav */}
       <style>{`

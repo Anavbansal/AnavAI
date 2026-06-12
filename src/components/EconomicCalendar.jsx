@@ -23,7 +23,7 @@ const EVENTS = [
 const IMPACT_COLOR = { HIGH:'var(--red)', MED:'var(--amber)', LOW:'var(--text3)' }
 const CAT_EMOJI = { 'Monetary Policy':'🏦', 'Global':'🌍', 'Inflation':'📈', 'Growth':'🚀', 'Trade':'⚖️', 'F&O':'📊', 'Tax':'💰', 'Holiday':'🎉' }
 
-export default function EconomicCalendar() {
+function EconomicCalendar() {
   const [filter, setFilter] = useState('ALL')
   const today = new Date().toISOString().slice(0,10)
 
@@ -122,3 +122,5 @@ export default function EconomicCalendar() {
     </div>
   )
 }
+
+export default React.memo(EconomicCalendar)

@@ -7,6 +7,23 @@
 
 import http from "node:http";
 import { WebSocketServer } from "ws";
+
+// ─── Response cache (5 min TTL for historical, 30s for live) ─────────────────
+const responseCache = new Map(); // key -> {data, ts, ttl}
+function getCached(key) {
+  const entry = responseCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > entry.ttl) { responseCache.delete(key); return null; }
+  return entry.data;
+}
+function setCache(key, data, ttlMs=300000) {
+  // Evict if too large (>200 entries)
+  if (responseCache.size > 200) {
+    const oldest = [...responseCache.entries()].sort((a,b)=>a[1].ts-b[1].ts)[0];
+    if (oldest) responseCache.delete(oldest[0]);
+  }
+  responseCache.set(key, { data, ts: Date.now(), ttl: ttlMs });
+}
 import { URL } from "node:url";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
@@ -1035,6 +1052,8 @@ function writeJson(req, res, statusCode, body) {
     "Access-Control-Allow-Methods":     "GET,POST,PUT,DELETE,OPTIONS",
     "Access-Control-Allow-Credentials": "true",
     "Vary":                             "Origin",
+    "Cache-Control":                    statusCode===200 ? "private, max-age=30" : "no-cache",
+    "X-Powered-By":                     "AnavAI",
   });
   res.end(JSON.stringify(body));
 }
@@ -1938,6 +1957,9 @@ const server = http.createServer(async (req, res) => {
 
     // ── /news — Live News via Google RSS fallback (Upstox news needs live token) ──
     if (req.method === "GET" && url.pathname === "/news") {
+      const cacheKey = "news:" + (url.searchParams.get("instrument_keys")||"");
+      const cached = getCached(cacheKey);
+      if (cached) { writeJson(req, res, 200, cached); return; }
       const instrumentKeys = url.searchParams.get("instrument_keys") || "";
       const category = url.searchParams.get("category") || "market";
       const token = getToken(req);
@@ -2019,6 +2041,9 @@ const server = http.createServer(async (req, res) => {
 
     // ── /fundamentals — Company Fundamentals (NSE free API + Screener fallback) ──
     if (req.method === "GET" && url.pathname === "/fundamentals") {
+      const fSym = url.searchParams.get("symbol")||"";
+      const fcached = getCached("fund:"+fSym);
+      if (fcached) { writeJson(req, res, 200, fcached); return; }
       const isin   = url.searchParams.get("isin")   || "";
       const symbol = url.searchParams.get("symbol") || "";
       const token  = getToken(req);

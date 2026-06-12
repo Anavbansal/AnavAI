@@ -2,7 +2,7 @@ import React from 'react'
 
 const f = (n,d=2) => Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:d,maximumFractionDigits:d})
 
-export default function AIInsights({ ai, data, loading }) {
+function AIInsights({ ai, data, loading }) {
   if (loading) return (
     <div className="card" style={{display:'flex',alignItems:'center',gap:12,padding:24}}>
       <div className="anim-spin" style={{width:20,height:20,border:'2px solid var(--border)',borderTopColor:'var(--accent)',borderRadius:'50%',flexShrink:0}}/>
@@ -125,3 +125,5 @@ export default function AIInsights({ ai, data, loading }) {
     </div>
   )
 }
+
+export default React.memo(AIInsights)

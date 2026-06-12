@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react'
 
 const f = (n,d=2) => Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:d,maximumFractionDigits:d})
 
-export default function RiskCalculator() {
+function RiskCalculator() {
   const [capital, setCapital] = useState(500000)
   const [riskPct, setRiskPct] = useState(1)
   const [entry,   setEntry]   = useState(0)
@@ -127,3 +127,5 @@ export default function RiskCalculator() {
     </div>
   )
 }
+
+export default React.memo(RiskCalculator)

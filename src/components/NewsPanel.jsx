@@ -15,7 +15,7 @@ function timeAgo(ms) {
   const h = Math.floor(mins/60); return `${h}h ago`
 }
 
-export default function NewsPanel({ symbol, instrumentKey }) {
+function NewsPanel({ symbol, instrumentKey }) {
   const [articles, setArticles] = useState([])
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState(null)
@@ -104,3 +104,5 @@ export default function NewsPanel({ symbol, instrumentKey }) {
     </div>
   )
 }
+
+export default React.memo(NewsPanel)

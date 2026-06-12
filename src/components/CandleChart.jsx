@@ -373,6 +373,18 @@ export default function CandleChart({ data, ai, onTfChange, activeTfi }) {
     return ()=>ro.disconnect()
   },[])
 
+  // Non-passive wheel listener (fixes "Unable to preventDefault in passive" warning)
+  useEffect(()=>{
+    const el = containerRef.current
+    if (!el) return
+    const onWheel = (e) => {
+      e.preventDefault()
+      setZoom(z => Math.max(1, Math.min(10, z + (e.deltaY > 0 ? -0.2 : 0.2))))
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+
   const candles = useMemo(()=>{
     if (!data?.candles?.length) return []
     const all    = data.candles
@@ -429,7 +441,7 @@ export default function CandleChart({ data, ai, onTfChange, activeTfi }) {
   function handleMouseLeave() { setCrosshair({x:-1,y:-1}) }
 
   function handleWheel(e) {
-    e.preventDefault()
+    // Note: preventDefault called via useEffect addEventListener (not passive)
     setZoom(z => Math.max(1, Math.min(10, z + (e.deltaY > 0 ? -0.2 : 0.2))))
   }
 
@@ -565,8 +577,7 @@ export default function CandleChart({ data, ai, onTfChange, activeTfi }) {
         onMouseMove={e=>{handleMouseMove(e);handleMouseMoveForPan(e)}}
         onMouseLeave={handleMouseLeave}
         onMouseDown={handleMouseDown}
-        onMouseUp={handleMouseUp}
-        onWheel={handleWheel}>
+        onMouseUp={handleMouseUp}>
         {candles.length>0
           ? <canvas ref={canvasRef} style={{width:size.w,height:size.h,display:'block'}}/>
           : <div style={{height:size.h,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
