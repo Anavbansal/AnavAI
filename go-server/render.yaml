@@ -1,9 +1,0 @@
-services:
-  - type: web
-    name: anavai-go
-    runtime: go
-    buildCommand: go build -o anavai-server .
-    startCommand: ./anavai-server
-    envVars:
-      - key: PORT
-        value: 10000

@@ -1,11 +1,12 @@
 services:
   - type: web
-    name: anavai-backend
-    runtime: node
-    buildCommand: npm install
-    startCommand: node local-api-server.mjs
+    name: anavai-go
+    runtime: go
+    rootDir: .
+    buildCommand: go build -ldflags="-s -w" -o anavai-server .
+    startCommand: ./anavai-server
     envVars:
-      - key: NODE_ENV
-        value: production
       - key: PORT
         value: 10000
+      - key: NODE_ENV
+        value: production
