@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react'
 import Header from '../components/Header'
 import SearchBar from '../components/SearchBar'
 import PricePanel from '../components/PricePanel'
-import { lazy, Suspense } from 'react'
 
 // Always loaded (critical path)
 import AIInsights from '../components/AIInsights'
