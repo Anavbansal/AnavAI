@@ -108,7 +108,7 @@ func handleAssistant(w http.ResponseWriter, r *http.Request) {
 			token := getToken(r)
 			candles, err := fetchHistoricalCandles(instrKey, "5", token)
 			if err == nil && len(candles) > 0 {
-				analysis := buildAnalysis(sym, candles, token)
+				analysis := buildAnalysis(sym, resolveInstrumentKey(sym), candles, token)
 				dataJSON, _ := json.Marshal(map[string]interface{}{
 					"symbol":    sym,
 					"price":     analysis.Price,

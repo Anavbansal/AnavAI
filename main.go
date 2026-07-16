@@ -118,7 +118,7 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build response
-	resp := buildAnalysis(symbol, candles, token)
+	resp := buildAnalysis(symbol, instrKey, candles, token)
 	resp.Quality = map[string]interface{}{
 		"source":       "UPSTOX_LIVE",
 		"candleCount":  len(candles),
@@ -133,7 +133,7 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]interface{}{"status": "success", "data": resp})
 }
 
-func buildAnalysis(symbol string, candles []Candle, token string) *AnalyzeResponse {
+func buildAnalysis(symbol, instrKey string, candles []Candle, token string) *AnalyzeResponse {
 	last := candles[len(candles)-1]
 	closes := make([]float64, len(candles))
 	for i, c := range candles { closes[i] = c.Close }
@@ -170,17 +170,25 @@ func buildAnalysis(symbol string, candles []Candle, token string) *AnalyzeRespon
 	high52, low52 := calc52W(candles)
 	ai := calcAIVerdict(last.Close, vwap, ema20, ema50, rsi, macd, supertrend, adx, volRatio, atr)
 
+	// Try to get real-time LTP from Upstox market quote
+	livePrice := last.Close
+	if token != os.Getenv("UPSTOX_SANDBOX_ACCESS_TOKEN") && token != "" {
+		if ltp, err := fetchLTP(instrKey, token); err == nil && ltp > 0 {
+			livePrice = ltp
+		}
+	}
+
 	// Change from previous candle
 	change, changePct := 0.0, 0.0
 	if len(candles) > 1 {
 		prev := candles[len(candles)-2].Close
-		change = round2(last.Close - prev)
+		change = round2(livePrice - prev)
 		if prev > 0 { changePct = round2(change / prev * 100) }
 	}
 
 	return &AnalyzeResponse{
 		Symbol:        symbol,
-		Price:         last.Close,
+		Price:         livePrice,
 		Change:        change,
 		ChangePct:     changePct,
 		Open:          last.Open,
@@ -383,6 +391,57 @@ func handleFundamentals(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, result)
 }
 
+// ── /auth/refresh ────────────────────────────────────────────────────────────
+func handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" { writeJSON(w, 405, map[string]string{"error": "method not allowed"}); return }
+	body, _ := io.ReadAll(r.Body)
+	var req map[string]string
+	json.Unmarshal(body, &req)
+	refreshTok := req["refresh_token"]
+	if refreshTok == "" { writeJSON(w, 400, map[string]string{"error": "refresh_token required"}); return }
+	newToken, err := refreshToken(refreshTok)
+	if err != nil {
+		writeJSON(w, 400, map[string]interface{}{"status": "error", "message": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]interface{}{
+		"status": "success",
+		"data":   map[string]string{"access_token": newToken},
+	})
+}
+
+// ── /api/holdings ─────────────────────────────────────────────────────────────
+func handleHoldings(w http.ResponseWriter, r *http.Request) {
+	token := getToken(r)
+	if token == os.Getenv("UPSTOX_SANDBOX_ACCESS_TOKEN") {
+		writeJSON(w, 200, map[string]interface{}{"status": "success", "data": []interface{}{}})
+		return
+	}
+	holdings, err := fetchHoldings(token)
+	if err != nil {
+		writeJSON(w, 200, map[string]interface{}{"status": "error", "message": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]interface{}{"status": "success", "data": holdings})
+}
+
+// ── /api/quote ────────────────────────────────────────────────────────────────
+func handleQuote(w http.ResponseWriter, r *http.Request) {
+	instrKey := r.URL.Query().Get("instrument_key")
+	if instrKey == "" { writeJSON(w, 400, map[string]string{"error": "instrument_key required"}); return }
+	cKey := "quote:" + instrKey
+	if cached, ok := cache.Get(cKey); ok { writeJSON(w, 200, cached); return }
+	token := getToken(r)
+	quote, err := fetchFullQuote(instrKey, token)
+	if err != nil {
+		writeJSON(w, 200, map[string]interface{}{"status": "error", "message": err.Error()})
+		return
+	}
+	result := map[string]interface{}{"status": "success", "data": quote}
+	cache.Set(cKey, result, 10*time.Second)
+	writeJSON(w, 200, result)
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 func main() {
 	port := os.Getenv("PORT")
@@ -402,6 +461,9 @@ func main() {
 		"/news":             handleNewsRoute,
 		"/fundamentals":     handleFundamentals,
 		"/health":           func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok", "service": "AnavAI Go Server"}) },
+		"/auth/refresh":      handleAuthRefresh,
+		"/api/holdings":      handleHoldings,
+		"/api/quote":         handleQuote,
 	}
 
 	for path, handler := range routes {

@@ -325,6 +325,76 @@ var symbolKeyMap = map[string]string{
 	"POLYCAB":     "NSE_EQ|INE455K01017",
 }
 
+
+// fetchFullQuote — real-time OHLC + LTP + volume + circuit limits
+func fetchFullQuote(instrumentKey, token string) (map[string]interface{}, error) {
+	data, err := upstoxGet("/v2/market-quote/quotes", token, map[string]string{
+		"instrument_key": instrumentKey,
+	})
+	if err != nil { return nil, err }
+	d, ok := data["data"].(map[string]interface{})
+	if !ok { return nil, fmt.Errorf("no data") }
+	for _, v := range d {
+		if m, ok := v.(map[string]interface{}); ok {
+			return m, nil
+		}
+	}
+	return nil, fmt.Errorf("quote not found")
+}
+
+// fetchOHLC — real-time OHLC for a symbol
+func fetchOHLC(instrumentKey, interval, token string) (map[string]interface{}, error) {
+	if interval == "" { interval = "1d" }
+	data, err := upstoxGet("/v2/market-quote/ohlc", token, map[string]string{
+		"instrument_key": instrumentKey,
+		"interval":       interval,
+	})
+	if err != nil { return nil, err }
+	d, ok := data["data"].(map[string]interface{})
+	if !ok { return nil, fmt.Errorf("no data") }
+	for _, v := range d {
+		if m, ok := v.(map[string]interface{}); ok {
+			return m, nil
+		}
+	}
+	return nil, fmt.Errorf("ohlc not found")
+}
+
+// fetchHoldings — actual portfolio from Upstox
+func fetchHoldings(token string) ([]interface{}, error) {
+	data, err := upstoxGet("/v2/portfolio/long-term-holdings", token, nil)
+	if err != nil { return nil, err }
+	d, ok := data["data"].([]interface{})
+	if !ok { return nil, fmt.Errorf("no holdings data") }
+	return d, nil
+}
+
+// refreshToken — auto refresh when token expires
+func refreshToken(refreshTok string) (string, error) {
+	clientID := os.Getenv("UPSTOX_ALGO_CLIENT_ID")
+	if clientID == "" { clientID = os.Getenv("UPSTOX_CLIENT_ID") }
+	clientSecret := os.Getenv("UPSTOX_ALGO_CLIENT_SECRET")
+	if clientSecret == "" { clientSecret = os.Getenv("UPSTOX_CLIENT_SECRET") }
+
+	form := url.Values{}
+	form.Set("refresh_token", refreshTok)
+	form.Set("client_id", clientID)
+	form.Set("client_secret", clientSecret)
+	form.Set("grant_type", "refresh_token")
+
+	resp, err := http.PostForm("https://api.upstox.com/v2/login/token/refresh",
+		form)
+	if err != nil { return "", err }
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	if token, ok := result["access_token"].(string); ok {
+		return token, nil
+	}
+	return "", fmt.Errorf("refresh failed: %v", result)
+}
+
 func minInt(a, b int) int {
 	if a < b {
 		return a
