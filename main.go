@@ -186,40 +186,65 @@ func buildAnalysis(symbol, instrKey string, candles []Candle, token string) *Ana
 		if prev > 0 { changePct = round2(change / prev * 100) }
 	}
 
+	// Additional calculations
+	stochRSI := calcStochRSI(closes, 14, 14, 3, 3)
+	support, resistance := calcSupportResistance(candles)
+	m1Trend  := detectTrend(livePrice, ema9)
+	m5Trend  := detectTrend(livePrice, ema20)
+	m15Trend := detectTrend(livePrice, ema50)
+	regime   := "RANGING"
+	if adx != nil && adx.ADX > 25 { regime = adx.Trend }
+	trendConsistency := "MIXED"
+	bullCount := 0
+	if livePrice > vwap { bullCount++ }
+	if livePrice > ema20 { bullCount++ }
+	if supertrend != nil && supertrend.Direction == "up" { bullCount++ }
+	if macd != nil && macd.Histogram > 0 { bullCount++ }
+	if bullCount >= 3 { trendConsistency = "CONFIRMED" } else if bullCount <= 1 { trendConsistency = "BEARISH" }
+
 	return &AnalyzeResponse{
-		Symbol:        symbol,
-		Price:         livePrice,
-		Change:        change,
-		ChangePct:     changePct,
-		Open:          last.Open,
-		High:          last.High,
-		Low:           last.Low,
-		Volume:        last.Volume,
-		VWAP:          vwap,
-		EMA9:          ema9,
-		EMA20:         ema20,
-		EMA50:         ema50,
-		EMA200:        ema200,
-		RSI:           rsi,
-		ATR:           atr,
-		VolumeRatio:   volRatio,
-		High52W:       high52,
-		Low52W:        low52,
-		Candles:       candles,
+		Symbol:       symbol,
+		Price:        livePrice,
+		Change:       change,
+		ChangePct:    changePct,
+		Open:         last.Open,
+		High:         last.High,
+		Low:          last.Low,
+		Volume:       last.Volume,
+		VWAP:         vwap,
+		EMA9:         ema9,
+		EMA20:        ema20,
+		EMA50:        ema50,
+		EMA200:       ema200,
+		RSI:          rsi,
+		ATR:          atr,
+		VolumeRatio:  volRatio,
+		High52W:      high52,
+		Low52W:       low52,
+		PCR:          1.0,
+		Support:      support,
+		Resistance:   resistance,
+		M1Trend:      m1Trend,
+		M5Trend:      m5Trend,
+		M15Trend:     m15Trend,
+		Regime:       regime,
+		TrendConsistency: trendConsistency,
+		StochRSI:     stochRSI,
+		Candles:      candles,
 		BollingerBands: bb,
-		MACD:          macd,
-		Supertrend:    supertrend,
-		ADX:           adx,
-		Fibonacci:     fib,
-		PivotPoints:   pivots,
-		OBV:           obv,
-		VWAPBands:     vwapBands,
-		ORB:           orb,
-		PDHDPL:        pd,
-		GapAnalysis:   gap,
+		MACD:         macd,
+		Supertrend:   supertrend,
+		ADX:          adx,
+		Fibonacci:    fib,
+		PivotPoints:  pivots,
+		OBV:          obv,
+		VWAPBands:    vwapBands,
+		ORB:          orb,
+		PDHDPL:       pd,
+		GapAnalysis:  gap,
 		VolComparison: volComp,
 		CircuitLimits: circuit,
-		AI:            ai,
+		AI:           ai,
 	}
 }
 
@@ -391,6 +416,47 @@ func handleFundamentals(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, result)
 }
 
+// ── /auth/exchange — frontend manually exchanges code for token ──────────────
+func handleAuthExchange(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" { writeJSON(w, 405, map[string]string{"error": "method not allowed"}); return }
+	body, _ := io.ReadAll(r.Body)
+	var req map[string]string
+	json.Unmarshal(body, &req)
+	code := req["code"]
+	if code == "" { writeJSON(w, 400, map[string]string{"error": "code required"}); return }
+
+	clientID     := os.Getenv("UPSTOX_ALGO_CLIENT_ID")
+	if clientID == "" { clientID = os.Getenv("UPSTOX_CLIENT_ID") }
+	clientSecret := os.Getenv("UPSTOX_ALGO_CLIENT_SECRET")
+	if clientSecret == "" { clientSecret = os.Getenv("UPSTOX_CLIENT_SECRET") }
+	redirectURI  := os.Getenv("UPSTOX_ALGO_REDIRECT_URI")
+	if redirectURI == "" { redirectURI = os.Getenv("UPSTOX_REDIRECT_URI") }
+	if req["redirectUri"] != "" { redirectURI = req["redirectUri"] }
+
+	form := url.Values{}
+	form.Set("code", code)
+	form.Set("client_id", clientID)
+	form.Set("client_secret", clientSecret)
+	form.Set("redirect_uri", redirectURI)
+	form.Set("grant_type", "authorization_code")
+
+	resp, err := http.PostForm("https://api.upstox.com/v2/login/authorization/token", form)
+	if err != nil {
+		writeJSON(w, 400, map[string]interface{}{"status": "error", "message": err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	var tokenData map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&tokenData)
+
+	if _, ok := tokenData["access_token"]; ok {
+		writeJSON(w, 200, map[string]interface{}{"status": "success", "data": tokenData})
+	} else {
+		writeJSON(w, 400, map[string]interface{}{"status": "error", "message": tokenData})
+	}
+}
+
 // ── /auth/refresh ────────────────────────────────────────────────────────────
 func handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" { writeJSON(w, 405, map[string]string{"error": "method not allowed"}); return }
@@ -462,6 +528,7 @@ func main() {
 		"/fundamentals":     handleFundamentals,
 		"/health":           func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok", "service": "AnavAI Go Server"}) },
 		"/auth/refresh":      handleAuthRefresh,
+		"/auth/exchange":     handleAuthExchange,
 		"/api/holdings":      handleHoldings,
 		"/api/quote":         handleQuote,
 	}

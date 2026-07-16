@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"math"
 )
 
@@ -623,16 +624,77 @@ func calc52W(candles []Candle) (float64, float64) {
 	return round2(h), round2(l)
 }
 
-// ── AI Scoring ────────────────────────────────────────────────────────────────
-type AIResult struct {
-	Verdict     string  `json:"verdict"`
-	Confidence  int     `json:"confidence"`
-	Score       int     `json:"score"`
-	Entry       float64 `json:"entry"`
-	Target      float64 `json:"target"`
-	StopLoss    float64 `json:"stopLoss"`
-	RiskReward  float64 `json:"riskReward"`
+
+// ── StochRSI ──────────────────────────────────────────────────────────────────
+func calcStochRSI(closes []float64, rsiPeriod, stochPeriod, kSmooth, dSmooth int) *StochRSIResult {
+	if len(closes) < rsiPeriod+stochPeriod+kSmooth+dSmooth {
+		return &StochRSIResult{K: 50, D: 50}
+	}
+	// Build RSI series
+	rsiSeries := make([]float64, len(closes))
+	for i := rsiPeriod; i < len(closes); i++ {
+		rsiSeries[i] = calcRSI(closes[:i+1], rsiPeriod)
+	}
+	// Stochastic of RSI
+	stochSeries := make([]float64, len(rsiSeries))
+	for i := rsiPeriod + stochPeriod; i < len(rsiSeries); i++ {
+		window := rsiSeries[i-stochPeriod+1 : i+1]
+		lo, hi := window[0], window[0]
+		for _, v := range window { if v < lo { lo = v }; if v > hi { hi = v } }
+		if hi-lo > 0 { stochSeries[i] = (rsiSeries[i]-lo)/(hi-lo)*100 }
+	}
+	// K = SMA(stoch, kSmooth)
+	kSeries := make([]float64, len(stochSeries))
+	for i := kSmooth - 1; i < len(stochSeries); i++ {
+		sum := 0.0
+		for _, v := range stochSeries[i-kSmooth+1 : i+1] { sum += v }
+		kSeries[i] = sum / float64(kSmooth)
+	}
+	// D = SMA(K, dSmooth)
+	dSeries := make([]float64, len(kSeries))
+	for i := dSmooth - 1; i < len(kSeries); i++ {
+		sum := 0.0
+		for _, v := range kSeries[i-dSmooth+1 : i+1] { sum += v }
+		dSeries[i] = sum / float64(dSmooth)
+	}
+	return &StochRSIResult{
+		K: round2(kSeries[len(kSeries)-1]),
+		D: round2(dSeries[len(dSeries)-1]),
+	}
 }
+
+// ── Support & Resistance ──────────────────────────────────────────────────────
+func calcSupportResistance(candles []Candle) (support, resistance float64) {
+	if len(candles) < 5 { return 0, 0 }
+	src := candles
+	if len(src) > 50 { src = src[len(src)-50:] }
+	// Find swing highs and lows
+	var highs, lows []float64
+	for i := 2; i < len(src)-2; i++ {
+		if src[i].High > src[i-1].High && src[i].High > src[i-2].High &&
+			src[i].High > src[i+1].High && src[i].High > src[i+2].High {
+			highs = append(highs, src[i].High)
+		}
+		if src[i].Low < src[i-1].Low && src[i].Low < src[i-2].Low &&
+			src[i].Low < src[i+1].Low && src[i].Low < src[i+2].Low {
+			lows = append(lows, src[i].Low)
+		}
+	}
+	price := src[len(src)-1].Close
+	support, resistance = src[len(src)-1].Low, src[len(src)-1].High
+	for _, h := range highs { if h > price && (resistance == src[len(src)-1].High || h < resistance) { resistance = h } }
+	for _, l := range lows  { if l < price && (support == src[len(src)-1].Low || l > support)        { support = l    } }
+	return round2(support), round2(resistance)
+}
+
+// ── Trend detection ────────────────────────────────────────────────────────────
+func detectTrend(price, ema float64) string {
+	if price > ema*1.002 { return "BULLISH" }
+	if price < ema*0.998 { return "BEARISH" }
+	return "NEUTRAL"
+}
+
+// ── AI Scoring ────────────────────────────────────────────────────────────────
 
 func calcAIVerdict(price, vwap, ema20, ema50 float64, rsi float64,
 	macd *MACDResult, supertrend *SupertrendResult, adx *ADXResult,
@@ -677,14 +739,49 @@ func calcAIVerdict(price, vwap, ema20, ema50 float64, rsi float64,
 		rr = round2(math.Abs(target-entry) / math.Abs(entry-sl))
 	}
 
+	// Build reasons list
+	reasons := []string{}
+	risks := []string{}
+	if price > vwap { reasons = append(reasons, "Price above VWAP — bullish bias") } else { risks = append(risks, "Price below VWAP — bearish bias") }
+	if price > ema20 { reasons = append(reasons, "Above EMA20 — short-term trend up") } else { risks = append(risks, "Below EMA20 — short-term weak") }
+	if supertrend != nil && supertrend.Direction == "up" { reasons = append(reasons, "Supertrend BULLISH") } else { risks = append(risks, "Supertrend BEARISH") }
+	if macd != nil && macd.Histogram > 0 { reasons = append(reasons, "MACD histogram positive") } else { risks = append(risks, "MACD histogram negative") }
+	if rsi < 30 { reasons = append(reasons, "RSI oversold — reversal possible") } else if rsi > 70 { risks = append(risks, "RSI overbought — correction risk") }
+
+	// Trend alignment
+	trendAlign := "NEUTRAL"
+	bullCount := 0
+	if price > vwap { bullCount++ }
+	if price > ema20 { bullCount++ }
+	if supertrend != nil && supertrend.Direction == "up" { bullCount++ }
+	if macd != nil && macd.Histogram > 0 { bullCount++ }
+	if bullCount >= 3 { trendAlign = "CONFIRMED_BULL" } else if bullCount <= 1 { trendAlign = "CONFIRMED_BEAR" }
+
+	// Regime
+	regime := "RANGING"
+	if adx != nil && adx.ADX > 25 { regime = adx.Trend }
+
+	// Option suggestion
+	optSugg := ""
+	if verdict == "BUY" && rsi < 65 { optSugg = "Buy ATM Call or Bull Call Spread" }
+	if verdict == "SELL" && rsi > 35 { optSugg = "Buy ATM Put or Bear Put Spread" }
+	if verdict == "HOLD" { optSugg = "Wait for breakout; consider Iron Condor if IV high" }
+
+	_ = regime // used in AnalyzeResponse
+
 	return &AIResult{
-		Verdict:    verdict,
-		Confidence: pct,
-		Score:      score,
-		Entry:      round2(entry),
-		Target:     round2(target),
-		StopLoss:   round2(sl),
-		RiskReward: rr,
+		Verdict:           verdict,
+		Confidence:        pct,
+		Score:             score,
+		Entry:             round2(entry),
+		Target:            round2(target),
+		StopLoss:          round2(sl),
+		RiskReward:        rr,
+		Reasons:           reasons,
+		Risks:             risks,
+		Summary:           fmt.Sprintf("%s signal with %d%% confidence. Entry ₹%.2f, Target ₹%.2f, SL ₹%.2f", verdict, pct, entry, target, sl),
+		OptionSuggestion:  optSugg,
+		TimeframeAlignment: trendAlign,
 	}
 }
 
