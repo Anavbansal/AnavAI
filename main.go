@@ -76,13 +76,7 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	json.NewEncoder(w).Encode(data)
 }
 
-func getToken(r *http.Request) string {
-	auth := r.Header.Get("Authorization")
-	if strings.HasPrefix(auth, "Bearer ") {
-		return strings.TrimPrefix(auth, "Bearer ")
-	}
-	return os.Getenv("UPSTOX_SANDBOX_ACCESS_TOKEN")
-}
+
 
 // ── /api/analyze ─────────────────────────────────────────────────────────────
 func handleAnalyze(w http.ResponseWriter, r *http.Request) {
