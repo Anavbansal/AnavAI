@@ -87,9 +87,9 @@ function mapNews(item, i) {
 }
 
 function transformPayload(payload, sym, timeframe) {
-  const candles = Array.isArray(payload?.candleData)
-    ? payload.candleData.map(normalizeCandle)
-    : []
+  // Support both Go server format (candles/ai) and legacy Node format (candleData/aiAnalysis)
+  const rawCandles = payload?.candleData || payload?.candles || []
+  const candles = Array.isArray(rawCandles) ? rawCandles.map(normalizeCandle) : []
 
   if (candles.length === 0) throw new Error('No candle data returned from server.')
 
@@ -100,21 +100,21 @@ function transformPayload(payload, sym, timeframe) {
 
   const price     = Number(payload?.price) || latest.close
   const prevClose = previous.close
-  const vwap      = Number(payload?.vwap)  || calcVWAP(candles)
-  const ema20     = Number(payload?.ema20) || calcEMA(closes, 20)
-  const ema50     = Number(payload?.ema50) || calcEMA(closes, 50)
-  const rsi       = Number(payload?.rsi)   || calcRSI(closes, 14)
-  const atr       = Number(exec?.atr)      || calcATR(candles, 14)
+  const vwap      = Number(payload?.vwap)   || calcVWAP(candles)
+  const ema20     = Number(payload?.ema20)  || calcEMA(closes, 20)
+  const ema50     = Number(payload?.ema50)  || calcEMA(closes, 50)
+  const rsi       = Number(payload?.rsi)    || calcRSI(closes, 14)
+  const atr       = Number(payload?.atr) || Number(exec?.atr) || calcATR(candles, 14)
   const bb        = payload?.bollingerBands || calcBollingerBands(closes, 20)
-  const macd      = payload?.macd          || calcMACD(closes)
-  const supertrend  = payload?.supertrend  || null
-  const ichimoku    = payload?.ichimoku    || null
-  const adx         = payload?.adx         || null
-  const fibonacci   = payload?.fibonacci   || null
-  const pivotPoints = payload?.pivotPoints || null
+  const macd      = payload?.macd           || calcMACD(closes)
+  const supertrend  = payload?.supertrend   || null
+  const ichimoku    = payload?.ichimoku     || null
+  const adx         = payload?.adx          || null
+  const fibonacci   = payload?.fibonacci    || null
+  const pivotPoints = payload?.pivotPoints  || null
   const candlePatterns = Array.isArray(payload?.candlePatterns) ? payload.candlePatterns : []
-  const obv         = payload?.obv         || null
-  const riskProfile = payload?.riskProfile || { profile: 'MODERATE', atrPct: 0, description: '' }
+  const obv         = payload?.obv          || null
+  const riskProfile = payload?.riskProfile  || { profile: 'MODERATE', atrPct: 0, description: '' }
   const investmentGuidance = payload?.investmentGuidance || null
   const foStrategies = Array.isArray(payload?.foStrategies) ? payload.foStrategies : []
   const maxPain     = Number(payload?.maxPain) || 0
@@ -129,24 +129,30 @@ function transformPayload(payload, sym, timeframe) {
 
   const ceOI = optionChain.filter(g=>g.optionType==='CE').reduce((s,g)=>s+g.oi,0)
   const peOI = optionChain.filter(g=>g.optionType==='PE').reduce((s,g)=>s+g.oi,0)
-  const pcr  = ceOI > 0 ? peOI / ceOI : Number(exec?.pcr) || 0
+  const pcr  = ceOI > 0 ? peOI / ceOI : Number(payload?.pcr) || Number(exec?.pcr) || 0
 
-  const support    = +Math.min(...candles.slice(-20).map(c=>c.low)).toFixed(2)
-  const resistance = +Math.max(...candles.slice(-20).map(c=>c.high)).toFixed(2)
+  // Support/Resistance — use Go values or calculate from candles
+  const support    = Number(payload?.support)    || +Math.min(...candles.slice(-20).map(c=>c.low)).toFixed(2)
+  const resistance = Number(payload?.resistance) || +Math.max(...candles.slice(-20).map(c=>c.high)).toFixed(2)
   const avgVol     = candles.slice(-20).reduce((s,c)=>s+c.volume,0) / Math.min(candles.length,20)
-  const volumeRatio = avgVol ? +(latest.volume/avgVol).toFixed(2) : 1
+  const volumeRatio = Number(payload?.volumeRatio) || (avgVol ? +(latest.volume/avgVol).toFixed(2) : 1)
 
-  const cleanSymbol = cleanSym(payload?.stock || sym)
-  const tf          = payload?.timeframeAnalysis ?? {}
-  const ai = buildAIShape(payload?.aiAnalysis, payload?.optionSignal, cleanSymbol)
+  const cleanSymbol = cleanSym(payload?.symbol || payload?.stock || sym)
+
+  // AI — support both Go (payload.ai) and Node (payload.aiAnalysis)
+  const aiSource = payload?.ai || payload?.aiAnalysis
+  const ai = buildAIShape(aiSource, payload?.optionSignal, cleanSymbol)
+
+  // Trend — Go sends m1Trend/m5Trend/m15Trend directly
+  const tf = payload?.timeframeAnalysis ?? {}
 
   return {
     symbol:   cleanSymbol,
     isIndex:  INDICES.includes(cleanSymbol),
     price, open: latest.open, high: latest.high, low: latest.low,
     prevClose,
-    change:    price - prevClose,
-    changePct: prevClose ? ((price - prevClose) / prevClose) * 100 : 0,
+    change:    +(price - prevClose).toFixed(2),
+    changePct: prevClose ? +((price - prevClose) / prevClose * 100).toFixed(2) : 0,
     vwap, ema20, ema50,
     ema9:    Number(payload?.ema9)   || calcEMA(closes, 9),
     ema100:  Number(payload?.ema100) || calcEMA(closes, 100),
@@ -155,13 +161,25 @@ function transformPayload(payload, sym, timeframe) {
     adx, fibonacci, pivotPoints, candlePatterns, obv,
     riskProfile, investmentGuidance, foStrategies, maxPain,
     support, resistance, volumeRatio, pcr,
-    regime:           exec?.marketRegime ?? 'RANGE',
+    // Go fields
+    vwapBands:    payload?.vwapBands    || null,
+    orb:          payload?.orb          || null,
+    pdhdpl:       payload?.pdhdpl       || null,
+    gapAnalysis:  payload?.gapAnalysis  || null,
+    volComparison:payload?.volComparison|| null,
+    circuitLimits:payload?.circuitLimits|| null,
+    stochRSI:     payload?.stochRSI     || null,
+    williamsR:    Number(payload?.williamsR) || 0,
+    cci:          Number(payload?.cci)       || 0,
+    high52w:      Number(payload?.high52w)   || 0,
+    low52w:       Number(payload?.low52w)    || 0,
+    regime:       payload?.regime || exec?.marketRegime || 'RANGE',
     trendConsistency: payload?.trendConsistency ?? 'DIVERGENT',
-    vwapDistancePct:  Number(exec?.vwapDistancePct) || (vwap ? ((price-vwap)/vwap)*100 : 0),
-    trendStrength:    Number(exec?.trendStrength)   || 0,
-    m1Trend:  tf?.m1  ?? summarizeTrend(candles, 2),
-    m5Trend:  tf?.m5  ?? summarizeTrend(candles, 5),
-    m15Trend: tf?.m15 ?? summarizeTrend(candles, 15),
+    vwapDistancePct: vwap ? +((price-vwap)/vwap*100).toFixed(2) : 0,
+    trendStrength: Number(exec?.trendStrength) || 0,
+    m1Trend:  payload?.m1Trend  || tf?.m1  || summarizeTrend(candles, 2),
+    m5Trend:  payload?.m5Trend  || tf?.m5  || summarizeTrend(candles, 5),
+    m15Trend: payload?.m15Trend || tf?.m15 || summarizeTrend(candles, 15),
     candles, ema20Series, optionChain, timeframe,
     latestNews: Array.isArray(payload?.latestNews) ? payload.latestNews.map(mapNews) : [],
     ai,
@@ -226,7 +244,9 @@ export async function analyzeSymbol(input, timeframe = '5', mode = 'tech') {
       throw new Error(msg)
     }
 
-    return transformPayload(payload, clean, timeframe)
+    // Unwrap Go server response: {status, data: {...}} or legacy flat format
+    const unwrapped = payload?.data ?? payload
+    return transformPayload(unwrapped, clean, timeframe)
 
   } catch (err) {
     console.warn('[marketData] API error, using fallback mock:', err.message)

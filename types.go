@@ -88,6 +88,7 @@ type AnalyzeResponse struct {
 	CircuitLimits *CircuitLimits    `json:"circuitLimits"`
 	// Data
 	Candles       []Candle          `json:"candles"`
+	CandleData    []Candle          `json:"candleData"` // alias for frontend compatibility
 	AI            *AIResult         `json:"ai"`
 	Quality       map[string]interface{} `json:"quality"`
 	// Extra fields used by frontend components

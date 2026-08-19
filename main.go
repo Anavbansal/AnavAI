@@ -252,6 +252,7 @@ func buildAnalysis(symbol, instrKey string, candles []Candle, token string) *Ana
 		ROC:          roc,
 		RiskProfile:  map[string]interface{}{"profile": "Moderate", "leverage": "1x"},
 		Candles:      candles,
+		CandleData:   candles, // frontend reads payload.candleData
 		BollingerBands: bb,
 		MACD:         macd,
 		Supertrend:   supertrend,
