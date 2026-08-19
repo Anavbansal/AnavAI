@@ -593,8 +593,12 @@ func main() {
 	mux := http.NewServeMux()
 
 	routes := map[string]http.HandlerFunc{
-		"/api/analyze":      handleAnalyze,
-		"/analyze":          handleAnalyze,
+		"/api/analyze":             handleAnalyze,
+		"/analyze":                 handleAnalyze,
+		"/ai/analyze":              handleAnalyze,
+		"/historical/intraday-v3":  handleIntradayV3,
+		"/historical/v3":           handleHistoricalV3,
+		"/historical/overview":     handleHistoricalOverview,
 		"/auth/url":         handleAuthURL,
 		"/auth/callback":    handleAuthCallback,
 		"/api/search":       handleSearch,
