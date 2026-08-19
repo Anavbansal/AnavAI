@@ -694,6 +694,49 @@ func detectTrend(price, ema float64) string {
 	return "NEUTRAL"
 }
 
+
+// ── Williams %R ───────────────────────────────────────────────────────────────
+func calcWilliamsR(candles []Candle, period int) float64 {
+	if len(candles) < period { return -50 }
+	src := candles[len(candles)-period:]
+	high := src[0].High
+	low  := src[0].Low
+	for _, c := range src {
+		if c.High > high { high = c.High }
+		if c.Low < low   { low  = c.Low  }
+	}
+	close := candles[len(candles)-1].Close
+	if high == low { return -50 }
+	return round2((high - close) / (high - low) * -100)
+}
+
+// ── CCI (Commodity Channel Index) ────────────────────────────────────────────
+func calcCCI(candles []Candle, period int) float64 {
+	if len(candles) < period { return 0 }
+	src := candles[len(candles)-period:]
+	tps := make([]float64, period)
+	sum := 0.0
+	for i, c := range src {
+		tp := (c.High + c.Low + c.Close) / 3
+		tps[i] = tp
+		sum += tp
+	}
+	mean := sum / float64(period)
+	mad  := 0.0
+	for _, tp := range tps { mad += math.Abs(tp - mean) }
+	mad /= float64(period)
+	if mad == 0 { return 0 }
+	return round2((tps[period-1] - mean) / (0.015 * mad))
+}
+
+// ── ROC (Rate of Change) ──────────────────────────────────────────────────────
+func calcROC(closes []float64, period int) float64 {
+	if len(closes) <= period { return 0 }
+	prev := closes[len(closes)-1-period]
+	if prev == 0 { return 0 }
+	return round2((closes[len(closes)-1] - prev) / prev * 100)
+}
+
 // ── AI Scoring ────────────────────────────────────────────────────────────────
 
 func calcAIVerdict(price, vwap, ema20, ema50 float64, rsi float64,

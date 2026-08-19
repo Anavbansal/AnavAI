@@ -187,8 +187,11 @@ func buildAnalysis(symbol, instrKey string, candles []Candle, token string) *Ana
 	}
 
 	// Additional calculations
-	stochRSI := calcStochRSI(closes, 14, 14, 3, 3)
+	stochRSI   := calcStochRSI(closes, 14, 14, 3, 3)
 	support, resistance := calcSupportResistance(candles)
+	williamsR  := calcWilliamsR(candles, 14)
+	cci        := calcCCI(candles, 20)
+	roc        := calcROC(closes, 12)
 	m1Trend  := detectTrend(livePrice, ema9)
 	m5Trend  := detectTrend(livePrice, ema20)
 	m15Trend := detectTrend(livePrice, ema50)
@@ -230,6 +233,10 @@ func buildAnalysis(symbol, instrKey string, candles []Candle, token string) *Ana
 		Regime:       regime,
 		TrendConsistency: trendConsistency,
 		StochRSI:     stochRSI,
+		WilliamsR:    williamsR,
+		CCI:          cci,
+		ROC:          roc,
+		RiskProfile:  map[string]interface{}{"profile": "Moderate", "leverage": "1x"},
 		Candles:      candles,
 		BollingerBands: bb,
 		MACD:         macd,

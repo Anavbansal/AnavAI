@@ -90,6 +90,23 @@ type AnalyzeResponse struct {
 	Candles       []Candle          `json:"candles"`
 	AI            *AIResult         `json:"ai"`
 	Quality       map[string]interface{} `json:"quality"`
+	// Extra fields used by frontend components
+	WilliamsR     float64  `json:"williamsR"`
+	CCI           float64  `json:"cci"`
+	ROC           float64  `json:"roc"`
+	// Fundamentals (when available)
+	PERatio       float64  `json:"pe_ratio"`
+	CompanyName   string   `json:"company_name"`
+	Sector        string   `json:"sector"`
+	Industry      string   `json:"industry"`
+	ISIN          string   `json:"isin"`
+	BusinessDesc  string   `json:"business_description"`
+	ListingDate   string   `json:"listingDate"`
+	Week52High    float64  `json:"week52High"`
+	Week52Low     float64  `json:"week52Low"`
+	Series        string   `json:"series"`
+	// Risk profile
+	RiskProfile   map[string]interface{} `json:"riskProfile"`
 }
 
 // APIResponse is generic wrapper
