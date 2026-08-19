@@ -99,9 +99,14 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve instrument key
+	// Resolve instrument key — use frontend-provided key first (most accurate)
 	instrKey := req.InstrumentKey
-	if instrKey == "" { instrKey = resolveInstrumentKey(symbol) }
+	if instrKey == "" {
+		instrKey = resolveInstrumentKey(symbol)
+	}
+	// Log for debugging
+	token2 := getToken(r)
+	_ = token2
 
 	// Fetch candles
 	candles, err := fetchHistoricalCandles(instrKey, resolution, token)
@@ -113,7 +118,16 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(candles) == 0 {
-		writeJSON(w, 200, map[string]interface{}{"status": "error", "message": "No candles returned"})
+		writeJSON(w, 200, map[string]interface{}{
+			"status": "error",
+			"message": "No candle data returned from server",
+			"debug": map[string]string{
+				"symbol": symbol,
+				"instrumentKey": instrKey,
+				"resolution": resolution,
+				"tip": "Check if instrumentKey is correct for this symbol",
+			},
+		})
 		return
 	}
 

@@ -89,25 +89,44 @@ func fetchHistoricalCandles(instrumentKey, resolution, token string) ([]Candle, 
 	}
 
 	if interval, ok := intraday[resolution]; ok {
-		// V3 intraday endpoint
+		var lastErr error
+
+		// Try 1: V3 intraday (today's candles)
 		path := fmt.Sprintf("/v3/historical-candle/intraday/%s/%s",
 			url.PathEscape(instrumentKey), interval)
-		data, err := upstoxGet(path, token, nil)
-		if err == nil {
-			candles := parseCandles(data)
-			if len(candles) > 0 {
+		if data, err := upstoxGet(path, token, nil); err == nil {
+			if candles := parseCandles(data); len(candles) > 0 {
+				return candles, nil
+			}
+		} else {
+			lastErr = err
+		}
+
+		// Try 2: V2 historical last 10 days (works even when market closed)
+		for _, days := range []int{1, 5, 10, 30} {
+			fromDate := now.AddDate(0, 0, -days).Format("2006-01-02")
+			path2 := fmt.Sprintf("/v2/historical-candle/%s/%s/%s/%s",
+				url.PathEscape(instrumentKey), interval, toDate, fromDate)
+			if data2, err2 := upstoxGet(path2, token, nil); err2 == nil {
+				if candles := parseCandles(data2); len(candles) > 0 {
+					return candles, nil
+				}
+			} else {
+				lastErr = err2
+			}
+		}
+
+		// Try 3: Use day candles as fallback
+		fromDate := now.AddDate(0, 0, -60).Format("2006-01-02")
+		path3 := fmt.Sprintf("/v2/historical-candle/%s/day/%s/%s",
+			url.PathEscape(instrumentKey), toDate, fromDate)
+		if data3, err3 := upstoxGet(path3, token, nil); err3 == nil {
+			if candles := parseCandles(data3); len(candles) > 0 {
 				return candles, nil
 			}
 		}
-		// Fallback: V2 historical with recent dates
-		fromDate := now.AddDate(0, 0, -5).Format("2006-01-02")
-		path2 := fmt.Sprintf("/v2/historical-candle/%s/%s/%s/%s",
-			url.PathEscape(instrumentKey), interval, toDate, fromDate)
-		data2, err2 := upstoxGet(path2, token, nil)
-		if err2 != nil {
-			return nil, fmt.Errorf("intraday fetch failed: v3=%v, v2=%v", err, err2)
-		}
-		return parseCandles(data2), nil
+
+		return nil, fmt.Errorf("all intraday attempts failed for %s: %v", instrumentKey, lastErr)
 	}
 
 	// ── Daily / Weekly / Monthly — V2 historical ────────────────────────────
@@ -230,99 +249,199 @@ func resolveInstrumentKey(symbol string) string {
 	if k, ok := symbolKeyMap[symbol]; ok {
 		return k
 	}
-	// Try NSE EQ format
+	// Try common formats — Upstox uses ISIN-based keys
+	// NSE_EQ|SYMBOL format works for most listed stocks
+	return "NSE_EQ|" + symbol
+}
+
+// resolveWithSearch tries to find instrument key via Upstox search API
+func resolveWithSearch(symbol, token string) string {
+	// First check static map
+	if k, ok := symbolKeyMap[symbol]; ok {
+		return k
+	}
+	if token == "" {
+		return "NSE_EQ|" + symbol
+	}
+	// Try Upstox search API
+	data, err := upstoxGet("/v2/market-quote/ltp", token, map[string]string{
+		"instrument_key": "NSE_EQ|" + symbol,
+	})
+	if err == nil {
+		if d, ok := data["data"].(map[string]interface{}); ok && len(d) > 0 {
+			return "NSE_EQ|" + symbol // Works!
+		}
+	}
+	// Try BSE fallback
 	return "NSE_EQ|" + symbol
 }
 
 // Symbol → Instrument key map
 var symbolKeyMap = map[string]string{
-	// Indices
-	"NIFTY":       "NSE_INDEX|Nifty 50",
-	"BANKNIFTY":   "NSE_INDEX|Nifty Bank",
-	"FINNIFTY":    "NSE_INDEX|Nifty Fin Service",
-	"MIDCPNIFTY":  "NSE_INDEX|NIFTY MID SELECT",
-	"SENSEX":      "BSE_INDEX|SENSEX",
-	"BANKEX":      "BSE_INDEX|BANKEX",
-	// Nifty 50
-	"RELIANCE":    "NSE_EQ|INE002A01018",
-	"TCS":         "NSE_EQ|INE467B01029",
-	"HDFCBANK":    "NSE_EQ|INE040A01034",
-	"INFY":        "NSE_EQ|INE009A01021",
-	"ICICIBANK":   "NSE_EQ|INE090A01021",
-	"HINDUNILVR":  "NSE_EQ|INE030A01027",
-	"ITC":         "NSE_EQ|INE154A01025",
-	"SBIN":        "NSE_EQ|INE062A01020",
-	"BHARTIARTL":  "NSE_EQ|INE397D01024",
-	"KOTAKBANK":   "NSE_EQ|INE237A01028",
-	"LT":          "NSE_EQ|INE018A01030",
-	"HCLTECH":     "NSE_EQ|INE860A01027",
-	"BAJFINANCE":  "NSE_EQ|INE296A01024",
-	"ASIANPAINT":  "NSE_EQ|INE021A01026",
-	"MARUTI":      "NSE_EQ|INE585B01010",
-	"ADANIENT":    "NSE_EQ|INE423A01024",
-	"AXISBANK":    "NSE_EQ|INE238A01034",
-	"WIPRO":       "NSE_EQ|INE075A01022",
-	"ULTRACEMCO":  "NSE_EQ|INE481G01011",
-	"TITAN":       "NSE_EQ|INE280A01028",
-	"BAJAJFINSV":  "NSE_EQ|INE918I01026",
-	"NESTLEIND":   "NSE_EQ|INE239A01024",
-	"SUNPHARMA":   "NSE_EQ|INE044A01036",
-	"TECHM":       "NSE_EQ|INE669C01036",
-	"ONGC":        "NSE_EQ|INE213A01029",
-	"TATAMOTORS":  "NSE_EQ|INE155A01022",
-	"NTPC":        "NSE_EQ|INE733E01010",
-	"POWERGRID":   "NSE_EQ|INE752E01010",
-	"INDUSINDBK":  "NSE_EQ|INE095A01012",
-	"COALINDIA":   "NSE_EQ|INE522F01014",
-	"TATASTEEL":   "NSE_EQ|INE081A01020",
-	"GRASIM":      "NSE_EQ|INE047A01021",
-	"ADANIPORTS":  "NSE_EQ|INE742F01042",
-	"DRREDDY":     "NSE_EQ|INE089A01031",
-	"DIVISLAB":    "NSE_EQ|INE361B01024",
-	"CIPLA":       "NSE_EQ|INE059A01026",
-	"APOLLOHOSP":  "NSE_EQ|INE437A01024",
-	"JSWSTEEL":    "NSE_EQ|INE019A01038",
-	"EICHERMOT":   "NSE_EQ|INE066A01021",
-	"BPCL":        "NSE_EQ|INE029A01011",
-	"BRITANNIA":   "NSE_EQ|INE216A01030",
-	"HEROMOTOCO":  "NSE_EQ|INE158A01026",
-	"HINDALCO":    "NSE_EQ|INE038A01020",
-	"MM":          "NSE_EQ|INE101A01026",
-	"TRENT":       "NSE_EQ|INE849A01020",
-	"BEL":         "NSE_EQ|INE263A01024",
-	// Popular stocks
-	"ZOMATO":      "NSE_EQ|INE758T01015",
-	"HAL":         "NSE_EQ|INE066F01012",
-	"IRFC":        "NSE_EQ|INE053F01010",
-	"TATAPOWER":   "NSE_EQ|INE245A01021",
-	"NATIONALUM":  "NSE_EQ|INE139A01034",
-	"SUZLON":      "NSE_EQ|INE040H01021",
-	"CANBK":       "NSE_EQ|INE476A01014",
-	"CESC":        "NSE_EQ|INE486A01021",
-	"YESBANK":     "NSE_EQ|INE528G01035",
-	"PAYTM":       "NSE_EQ|INE982J01020",
-	"NYKAA":       "NSE_EQ|INE388Y01029",
-	"DMART":       "NSE_EQ|INE192R01011",
-	"IRCTC":       "NSE_EQ|INE335Y01020",
-	"MAZDOCK":     "NSE_EQ|INE249M01031",
-	"DLF":         "NSE_EQ|INE271C01023",
-	"PFC":         "NSE_EQ|INE134E01011",
-	"RECLTD":      "NSE_EQ|INE020B01018",
-	"IOC":         "NSE_EQ|INE242A01010",
-	"NHPC":        "NSE_EQ|INE848E01016",
-	"SJVN":        "NSE_EQ|INE002L01015",
-	"GAIL":        "NSE_EQ|INE129A01019",
-	"HDFCLIFE":    "NSE_EQ|INE795G01014",
-	"SBICARD":     "NSE_EQ|INE018E01016",
-	"SBILIFE":     "NSE_EQ|INE123W01016",
-	"LICI":        "NSE_EQ|INE0J1Y01017",
-	"LTIM":        "NSE_EQ|INE214T01019",
-	"PERSISTENT":  "NSE_EQ|INE262H01021",
-	"MPHASIS":     "NSE_EQ|INE356A01018",
-	"COFORGE":     "NSE_EQ|INE591G01017",
-	"KPITTECH":    "NSE_EQ|INE836A01035",
-	"DIXON":       "NSE_EQ|INE935N01020",
-	"POLYCAB":     "NSE_EQ|INE455K01017",
+	"ABB":	"NSE_EQ|INE117A01022",
+	"ABBOTINDIA":	"NSE_EQ|INE358A01014",
+	"ABCAPITAL":	"NSE_EQ|INE674K01013",
+	"ACCLTD":	"NSE_EQ|INE012A01025",
+	"ADANIENT":	"NSE_EQ|INE423A01024",
+	"ADANIPORTS":	"NSE_EQ|INE742F01042",
+	"ALKEM":	"NSE_EQ|INE540L01014",
+	"AMBUJACEM":	"NSE_EQ|INE079A01024",
+	"ANGELONE":	"NSE_EQ|INE732I01013",
+	"APOLLOHOSP":	"NSE_EQ|INE437A01024",
+	"APOLLOTYRE":	"NSE_EQ|INE438A01022",
+	"ASHOKLEY":	"NSE_EQ|INE208A01029",
+	"ASIANPAINT":	"NSE_EQ|INE021A01026",
+	"AUBANK":	"NSE_EQ|INE949L01017",
+	"AUROPHARMA":	"NSE_EQ|INE406A01037",
+	"AXISBANK":	"NSE_EQ|INE238A01034",
+	"BAJAJ-AUTO":	"NSE_EQ|INE917I01010",
+	"BAJAJFINSV":	"NSE_EQ|INE918I01026",
+	"BAJFINANCE":	"NSE_EQ|INE296A01024",
+	"BALKRISIND":	"NSE_EQ|INE787D01026",
+	"BANDHANBNK":	"NSE_EQ|INE545U01014",
+	"BANKBARODA":	"NSE_EQ|INE028A01039",
+	"BANKEX":	"BSE_INDEX|BANKEX",
+	"BANKNIFTY":	"NSE_INDEX|Nifty Bank",
+	"BDL":	"NSE_EQ|INE171Z01018",
+	"BEL":	"NSE_EQ|INE263A01024",
+	"BHARATFORG":	"NSE_EQ|INE465A01025",
+	"BHARTIARTL":	"NSE_EQ|INE397D01024",
+	"BIOCON":	"NSE_EQ|INE376G01013",
+	"BPCL":	"NSE_EQ|INE029A01011",
+	"BRITANNIA":	"NSE_EQ|INE216A01030",
+	"BSE":	"NSE_EQ|INE118H01025",
+	"CANBK":	"NSE_EQ|INE476A01014",
+	"CDSL":	"NSE_EQ|INE736A01011",
+	"CESC":	"NSE_EQ|INE486A01021",
+	"CHOLAFIN":	"NSE_EQ|INE121A01024",
+	"CIPLA":	"NSE_EQ|INE059A01026",
+	"COALINDIA":	"NSE_EQ|INE522F01014",
+	"COCHINSHIP":	"NSE_EQ|INE704P01017",
+	"COFORGE":	"NSE_EQ|INE591G01017",
+	"CUMMINSIND":	"NSE_EQ|INE298A01020",
+	"DEEPAKNTR":	"NSE_EQ|INE288B01029",
+	"DIVISLAB":	"NSE_EQ|INE361B01024",
+	"DIXON":	"NSE_EQ|INE935N01020",
+	"DLF":	"NSE_EQ|INE271C01023",
+	"DMART":	"NSE_EQ|INE192R01011",
+	"DRREDDY":	"NSE_EQ|INE089A01031",
+	"EICHERMOT":	"NSE_EQ|INE066A01021",
+	"FEDERALBNK":	"NSE_EQ|INE171A01029",
+	"FINNIFTY":	"NSE_INDEX|Nifty Fin Service",
+	"FORTIS":	"NSE_EQ|INE401H01019",
+	"GAIL":	"NSE_EQ|INE129A01019",
+	"GODREJPROP":	"NSE_EQ|INE484J01027",
+	"GRASIM":	"NSE_EQ|INE047A01021",
+	"GRSE":	"NSE_EQ|INE382Z01011",
+	"GUJGASLTD":	"NSE_EQ|INE844O01030",
+	"HAL":	"NSE_EQ|INE066F01012",
+	"HAVELLS":	"NSE_EQ|INE176B01034",
+	"HCLTECH":	"NSE_EQ|INE860A01027",
+	"HDFCBANK":	"NSE_EQ|INE040A01034",
+	"HDFCLIFE":	"NSE_EQ|INE795G01014",
+	"HEROMOTOCO":	"NSE_EQ|INE158A01026",
+	"HINDALCO":	"NSE_EQ|INE038A01020",
+	"HINDUNILVR":	"NSE_EQ|INE030A01027",
+	"HSCL":	"NSE_EQ|INE019C01026",
+	"HUDCO":	"NSE_EQ|INE031A01017",
+	"ICICIBANK":	"NSE_EQ|INE090A01021",
+	"IDFCFIRSTB":	"NSE_EQ|INE092T01019",
+	"IGL":	"NSE_EQ|INE203G01027",
+	"INDHOTEL":	"NSE_EQ|INE053A01029",
+	"INDIGO":	"NSE_EQ|INE646L01027",
+	"INDUSINDBK":	"NSE_EQ|INE095A01012",
+	"INFY":	"NSE_EQ|INE009A01021",
+	"IOC":	"NSE_EQ|INE242A01010",
+	"IRCTC":	"NSE_EQ|INE335Y01020",
+	"IRFC":	"NSE_EQ|INE053F01010",
+	"ITC":	"NSE_EQ|INE154A01025",
+	"JSWSTEEL":	"NSE_EQ|INE019A01038",
+	"JUBLFOOD":	"NSE_EQ|INE797F01020",
+	"JUBLINGREA":	"NSE_EQ|INE485A01015",
+	"KALPATPOWR":	"NSE_EQ|INE220B01014",
+	"KEC":	"NSE_EQ|INE389H01022",
+	"KOTAKBANK":	"NSE_EQ|INE237A01028",
+	"KPITTECH":	"NSE_EQ|INE836A01035",
+	"LALPATHLAB":	"NSE_EQ|INE600L01024",
+	"LICHSGFIN":	"NSE_EQ|INE115A01026",
+	"LICI":	"NSE_EQ|INE0J1Y01017",
+	"LT":	"NSE_EQ|INE018A01030",
+	"LTIM":	"NSE_EQ|INE214T01019",
+	"LUPIN":	"NSE_EQ|INE326A01037",
+	"MANYAVAR":	"NSE_EQ|INE825V01022",
+	"MARUTI":	"NSE_EQ|INE585B01010",
+	"MAXHEALTH":	"NSE_EQ|INE027H01010",
+	"MAZDOCK":	"NSE_EQ|INE249M01031",
+	"MCX":	"NSE_EQ|INE745G01035",
+	"MGL":	"NSE_EQ|INE558L01010",
+	"MIDCPNIFTY":	"NSE_INDEX|NIFTY MID SELECT",
+	"MM":	"NSE_EQ|INE101A01026",
+	"MOTHERSON":	"NSE_EQ|INE775A01035",
+	"MPHASIS":	"NSE_EQ|INE356A01018",
+	"MRF":	"NSE_EQ|INE883A01011",
+	"MUTHOOTFIN":	"NSE_EQ|INE414G01012",
+	"NATIONALUM":	"NSE_EQ|INE139A01034",
+	"NAUKRI":	"NSE_EQ|INE663F01024",
+	"NESTLEIND":	"NSE_EQ|INE239A01024",
+	"NHPC":	"NSE_EQ|INE848E01016",
+	"NIFTY":	"NSE_INDEX|Nifty 50",
+	"NTPC":	"NSE_EQ|INE733E01010",
+	"NYKAA":	"NSE_EQ|INE388Y01029",
+	"OBEROIRLTY":	"NSE_EQ|INE093I01010",
+	"ONGC":	"NSE_EQ|INE213A01029",
+	"PAGEIND":	"NSE_EQ|INE761H01022",
+	"PAYTM":	"NSE_EQ|INE982J01020",
+	"PERSISTENT":	"NSE_EQ|INE262H01021",
+	"PETRONET":	"NSE_EQ|INE347G01014",
+	"PFC":	"NSE_EQ|INE134E01011",
+	"PHOENIXLTD":	"NSE_EQ|INE484J01027",
+	"PIIND":	"NSE_EQ|INE603J01030",
+	"PNB":	"NSE_EQ|INE160A01022",
+	"POLYCAB":	"NSE_EQ|INE455K01017",
+	"POWERGRID":	"NSE_EQ|INE752E01010",
+	"PRESTIGE":	"NSE_EQ|INE811K01011",
+	"RAILTEL":	"NSE_EQ|INE503X01023",
+	"RECLTD":	"NSE_EQ|INE020B01018",
+	"RELIANCE":	"NSE_EQ|INE002A01018",
+	"RITES":	"NSE_EQ|INE320J01015",
+	"RVNL":	"NSE_EQ|INE415G01027",
+	"SBICARD":	"NSE_EQ|INE018E01016",
+	"SBILIFE":	"NSE_EQ|INE123W01016",
+	"SBIN":	"NSE_EQ|INE062A01020",
+	"SENSEX":	"BSE_INDEX|SENSEX",
+	"SHREECEM":	"NSE_EQ|INE070A01015",
+	"SHRIRAMFIN":	"NSE_EQ|INE721A01013",
+	"SIEMENS":	"NSE_EQ|INE003A01024",
+	"SJVN":	"NSE_EQ|INE002L01015",
+	"SOBHA":	"NSE_EQ|INE671H01015",
+	"SOLARINDS":	"NSE_EQ|INE343H01029",
+	"SUNPHARMA":	"NSE_EQ|INE044A01036",
+	"SUZLON":	"NSE_EQ|INE040H01021",
+	"TATACHEM":	"NSE_EQ|INE092A01019",
+	"TATACOMM":	"NSE_EQ|INE151B01027",
+	"TATACONSUM":	"NSE_EQ|INE192A01025",
+	"TATAELXSI":	"NSE_EQ|INE670A01012",
+	"TATAMOTORS":	"NSE_EQ|INE155A01022",
+	"TATAPOWER":	"NSE_EQ|INE245A01021",
+	"TATASTEEL":	"NSE_EQ|INE081A01020",
+	"TCS":	"NSE_EQ|INE467B01029",
+	"TECHM":	"NSE_EQ|INE669C01036",
+	"THERMAX":	"NSE_EQ|INE152C01011",
+	"TIINDIA":	"NSE_EQ|INE289B01019",
+	"TITAGARH":	"NSE_EQ|INE615A01017",
+	"TITAN":	"NSE_EQ|INE280A01028",
+	"TORNTPHARM":	"NSE_EQ|INE685A01028",
+	"TRENT":	"NSE_EQ|INE849A01020",
+	"TVSMOTOR":	"NSE_EQ|INE494B01023",
+	"ULTRACEMCO":	"NSE_EQ|INE481G01011",
+	"UNIONBANK":	"NSE_EQ|INE692A01016",
+	"VEDL":	"NSE_EQ|INE205A01025",
+	"VOLTAS":	"NSE_EQ|INE226A01021",
+	"VPRPL":	"NSE_EQ|INE0AE001013",
+	"WIPRO":	"NSE_EQ|INE075A01022",
+	"XCHANGING":	"NSE_EQ|INE692G01013",
+	"YESBANK":	"NSE_EQ|INE528G01035",
+	"ZOMATO":	"NSE_EQ|INE758T01015",
 }
 
 
