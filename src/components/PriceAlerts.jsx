@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { API_BASE_URL } from '../config'
 
-const WS_URL = API_BASE_URL.replace(/^http/, 'ws')
+const WS_URL = API_BASE_URL.replace(/^http/, 'ws') + '/ws'
 
 export default function PriceAlerts({ data }) {
   const [alerts, setAlerts]   = useState([])

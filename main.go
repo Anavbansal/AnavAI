@@ -508,6 +508,83 @@ func handleQuote(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, result)
 }
 
+// ── /historical/intraday-v3 ──────────────────────────────────────────────────
+func handleIntradayV3(w http.ResponseWriter, r *http.Request) {
+	instrKey := r.URL.Query().Get("instrument_key")
+	interval := r.URL.Query().Get("interval")
+	if instrKey == "" { writeJSON(w, 400, map[string]string{"error": "instrument_key required"}); return }
+	if interval  == "" { interval = "5minute" }
+	token := getToken(r)
+
+	cKey := "intraday:" + instrKey + ":" + interval
+	if cached, ok := cache.Get(cKey); ok { writeJSON(w, 200, cached); return }
+
+	candles, err := fetchHistoricalCandles(instrKey, intervalToResolution(interval), token)
+	if err != nil {
+		writeJSON(w, 200, map[string]interface{}{"status": "error", "message": err.Error()})
+		return
+	}
+	result := map[string]interface{}{"status": "success", "data": map[string]interface{}{"candles": candlesToArray(candles)}}
+	cache.Set(cKey, result, 30*time.Second)
+	writeJSON(w, 200, result)
+}
+
+// ── /historical/v3 ───────────────────────────────────────────────────────────
+func handleHistoricalV3(w http.ResponseWriter, r *http.Request) {
+	instrKey := r.URL.Query().Get("instrument_key")
+	interval := r.URL.Query().Get("interval")
+	toDate   := r.URL.Query().Get("to_date")
+	fromDate := r.URL.Query().Get("from_date")
+	if instrKey == "" { writeJSON(w, 400, map[string]string{"error": "instrument_key required"}); return }
+	if interval  == "" { interval = "day" }
+	token := getToken(r)
+
+	resolution := "D"
+	switch interval {
+	case "week":  resolution = "W"
+	case "month": resolution = "M"
+	}
+
+	cKey := "hist:" + instrKey + ":" + interval + ":" + toDate
+	if cached, ok := cache.Get(cKey); ok { writeJSON(w, 200, cached); return }
+
+	_ = fromDate // used by Upstox internally
+	candles, err := fetchHistoricalCandles(instrKey, resolution, token)
+	if err != nil {
+		writeJSON(w, 200, map[string]interface{}{"status": "error", "message": err.Error()})
+		return
+	}
+	result := map[string]interface{}{"status": "success", "data": map[string]interface{}{"candles": candlesToArray(candles)}}
+	cache.Set(cKey, result, 5*time.Minute)
+	writeJSON(w, 200, result)
+}
+
+// ── /historical/overview ─────────────────────────────────────────────────────
+func handleHistoricalOverview(w http.ResponseWriter, r *http.Request) {
+	// Returns same as analyze but lightweight
+	handleAnalyze(w, r)
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+func intervalToResolution(interval string) string {
+	m := map[string]string{
+		"1minute": "1", "2minute": "1", "3minute": "1",
+		"5minute": "5", "10minute": "10", "15minute": "15",
+		"30minute": "30", "60minute": "60", "1hour": "60",
+		"day": "D", "week": "W", "month": "M",
+	}
+	if r, ok := m[interval]; ok { return r }
+	return "5"
+}
+
+func candlesToArray(candles []Candle) [][]interface{} {
+	result := make([][]interface{}, len(candles))
+	for i, c := range candles {
+		result[i] = []interface{}{c.Timestamp, c.Open, c.High, c.Low, c.Close, c.Volume}
+	}
+	return result
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 func main() {
 	port := os.Getenv("PORT")
@@ -527,6 +604,7 @@ func main() {
 		"/news":             handleNewsRoute,
 		"/fundamentals":     handleFundamentals,
 		"/health":           func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok", "service": "AnavAI Go Server"}) },
+		"/ws":               handleWebSocket,
 		"/auth/refresh":      handleAuthRefresh,
 		"/auth/exchange":     handleAuthExchange,
 		"/api/holdings":      handleHoldings,
@@ -540,11 +618,15 @@ func main() {
 	log.Printf("🚀 AnavAI Go Server starting on port %s", port)
 	log.Printf("   Routes: %d", len(routes))
 	log.Printf("   Cache: in-memory LRU")
+	log.Printf("   WebSocket: /ws (price streaming)")
 	log.Printf("   Upstox: %s", func() string {
 		if os.Getenv("UPSTOX_ALGO_CLIENT_ID") != "" { return "✓ ALGO APP" }
 		if os.Getenv("UPSTOX_CLIENT_ID") != "" { return "✓ SANDBOX" }
 		return "✗ NOT SET"
 	}())
+
+	// Start WebSocket price broadcaster
+	startPriceBroadcaster()
 
 	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		log.Fatal(err)

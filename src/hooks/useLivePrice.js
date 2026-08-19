@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { API_BASE_URL } from '../config'
 
-const WS_URL = API_BASE_URL.replace(/^http/, 'ws')
+const WS_URL = API_BASE_URL.replace(/^http/, 'ws') + '/ws'
 
 // Global WS singleton — one connection for entire app
 let globalWS = null
