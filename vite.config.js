@@ -24,7 +24,6 @@ export default defineConfig({
                             "./src/components/Intraday.jsx"],
           "chunk-symbols": ["./src/data/symbols.js"],
           "chunk-mf":      ["./src/components/MutualFunds.jsx"],
-          "vendor-recharts":["recharts"],
         },
       },
     },
