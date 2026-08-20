@@ -76,26 +76,53 @@ func (f *UpstoxFeed) Subscribe(keys []string) {
 	}
 }
 
-// StartFeed connects to Upstox V3 feed and maintains connection
+// StartUpstoxFeed connects to Upstox V3 feed and maintains connection
+// Only call with a LIVE user token (not sandbox/expired token)
 func StartUpstoxFeed(token string) {
-	if token == "" {
-		log.Println("[Feed] No token — Upstox V3 feed disabled")
+	if token == "" || len(token) < 100 {
+		log.Println("[Feed] Token too short or empty — V3 feed not started")
 		return
 	}
+
+	upstoxFeed.mu.Lock()
 	upstoxFeed.token = token
+	upstoxFeed.mu.Unlock()
+
 	go func() {
+		backoff := 5 * time.Second
+		failCount := 0
+
 		for {
 			err := connectFeed(token)
 			if err != nil {
-				log.Printf("[Feed] Disconnected: %v — reconnecting in 5s", err)
+				failCount++
+				if failCount >= 3 {
+					// Stop retrying after 3 consecutive 401s — token is dead
+					log.Printf("[Feed] Giving up after %d failures: %v", failCount, err)
+					// Reset flag so new token can restart feed
+					feedTokenMu.Lock()
+					feedStarted = false
+					feedTokenMu.Unlock()
+					return
+				}
+				log.Printf("[Feed] Disconnected (#%d): %v — retry in %v", failCount, err, backoff)
+			} else {
+				failCount = 0 // reset on clean disconnect
+				backoff = 5 * time.Second
 			}
 			select {
 			case <-upstoxFeed.stopCh:
 				return
-			case <-time.After(5 * time.Second):
+			case <-time.After(backoff):
+				backoff = min3(backoff*2, 60*time.Second) // exponential backoff
 			}
 		}
 	}()
+}
+
+func min3(a, b time.Duration) time.Duration {
+	if a < b { return a }
+	return b
 }
 
 func connectFeed(token string) error {

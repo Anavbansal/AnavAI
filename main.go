@@ -462,29 +462,25 @@ var (
 
 // Called when user authenticates — start feed with their token
 func setFeedToken(token string) {
-	if token == "" || len(token) < 50 { return }
+	// Must be a real live token (Upstox tokens are ~900+ chars JWT)
+	if token == "" || len(token) < 100 { return }
+	// Don't use sandbox token for feed
+	if token == os.Getenv("UPSTOX_SANDBOX_ACCESS_TOKEN") {
+		log.Printf("[Feed] Skipping sandbox token for V3 feed")
+		return
+	}
 	feedTokenMu.Lock()
 	defer feedTokenMu.Unlock()
 	feedToken = token
 	if !feedStarted {
 		feedStarted = true
 		go StartUpstoxFeed(token)
-		log.Printf("[Feed] Starting with user token (len=%d)", len(token))
+		log.Printf("[Feed] Starting V3 feed with live user token (len=%d)", len(token))
 	}
 }
 
-// monitorAndStartFeed waits for a valid token then starts the feed
-func monitorAndStartFeed() {
-	for {
-		feedTokenMu.Lock()
-		tok := feedToken
-		feedTokenMu.Unlock()
-		if tok != "" {
-			return // already started via setFeedToken
-		}
-		time.Sleep(10 * time.Second)
-	}
-}
+// monitorAndStartFeed — no-op, feed starts lazily via setFeedToken
+func monitorAndStartFeed() { /* feed starts when user authenticates */ }
 
 // ── /auth/exchange — frontend manually exchanges code for token ──────────────
 func handleAuthExchange(w http.ResponseWriter, r *http.Request) {
