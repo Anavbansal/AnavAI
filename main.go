@@ -104,9 +104,8 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	if instrKey == "" {
 		instrKey = resolveInstrumentKey(symbol)
 	}
-	// Log for debugging
-	token2 := getToken(r)
-	_ = token2
+	// Start feed with user's live token on first analyze
+	setFeedToken(token)
 
 	// Fetch candles
 	candles, err := fetchHistoricalCandles(instrKey, resolution, token)
@@ -454,6 +453,39 @@ func handleFundamentals(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, result)
 }
 
+// ── Token store — keeps latest valid user token for feed ─────────────────────
+var (
+	feedTokenMu  sync.Mutex
+	feedToken    string
+	feedStarted  bool
+)
+
+// Called when user authenticates — start feed with their token
+func setFeedToken(token string) {
+	if token == "" || len(token) < 50 { return }
+	feedTokenMu.Lock()
+	defer feedTokenMu.Unlock()
+	feedToken = token
+	if !feedStarted {
+		feedStarted = true
+		go StartUpstoxFeed(token)
+		log.Printf("[Feed] Starting with user token (len=%d)", len(token))
+	}
+}
+
+// monitorAndStartFeed waits for a valid token then starts the feed
+func monitorAndStartFeed() {
+	for {
+		feedTokenMu.Lock()
+		tok := feedToken
+		feedTokenMu.Unlock()
+		if tok != "" {
+			return // already started via setFeedToken
+		}
+		time.Sleep(10 * time.Second)
+	}
+}
+
 // ── /auth/exchange — frontend manually exchanges code for token ──────────────
 func handleAuthExchange(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" { writeJSON(w, 405, map[string]string{"error": "method not allowed"}); return }
@@ -488,7 +520,10 @@ func handleAuthExchange(w http.ResponseWriter, r *http.Request) {
 	var tokenData map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&tokenData)
 
-	if _, ok := tokenData["access_token"]; ok {
+	if accessToken, ok := tokenData["access_token"].(string); ok {
+		// Start V3 feed with this fresh token
+		go setFeedToken(accessToken)
+		log.Printf("[Auth] Token received, starting V3 feed")
 		writeJSON(w, 200, map[string]interface{}{"status": "success", "data": tokenData})
 	} else {
 		writeJSON(w, 400, map[string]interface{}{"status": "error", "message": tokenData})
@@ -668,12 +703,11 @@ func main() {
 		return "✗ NOT SET"
 	}())
 
-	// Start Upstox V3 WebSocket Market Feed (replaces REST polling for live prices)
-	liveToken := os.Getenv("UPSTOX_SANDBOX_ACCESS_TOKEN")
-	if liveToken != "" {
-		StartUpstoxFeed(liveToken)
-		log.Printf("   Upstox V3 Feed: starting...")
-	}
+	// Start Upstox V3 WebSocket Market Feed
+	// Token is provided per-user via Authorization header when they analyze
+	// Feed starts lazily when first user connects with a valid token
+	log.Printf("   Upstox V3 Feed: ready (starts on first authenticated analyze)")
+	go monitorAndStartFeed()
 
 	// Start WebSocket price broadcaster (fallback for non-feed symbols)
 	startPriceBroadcaster()
