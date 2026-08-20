@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -276,6 +277,169 @@ func resolveWithSearch(symbol, token string) string {
 	return "NSE_EQ|" + symbol
 }
 
+
+// ── Upstox Option Chain ───────────────────────────────────────────────────────
+
+// OptionStrike holds CE/PE data for a strike price
+type OptionStrike struct {
+	StrikePrice float64         `json:"strikePrice"`
+	CE          *OptionContract `json:"CE,omitempty"`
+	PE          *OptionContract `json:"PE,omitempty"`
+}
+
+type OptionContract struct {
+	LTP    float64 `json:"ltp"`
+	OI     float64 `json:"oi"`
+	OIChg  float64 `json:"oiChange"`
+	Volume float64 `json:"volume"`
+	IV     float64 `json:"iv"`
+	Delta  float64 `json:"delta"`
+	Theta  float64 `json:"theta"`
+	Gamma  float64 `json:"gamma"`
+	Vega   float64 `json:"vega"`
+	Bid    float64 `json:"bid"`
+	Ask    float64 `json:"ask"`
+}
+
+// fetchUpstoxOptionChain gets option chain from Upstox (not NSE — more reliable)
+func fetchUpstoxOptionChain(symbol, expiry, token string) ([]OptionStrike, float64, float64, error) {
+	// Map symbol to instrument key
+	instrKey := resolveInstrumentKey(symbol)
+	if strings.Contains(symbol, "NIFTY") || symbol == "SENSEX" {
+		instrKey = symbolKeyMap[symbol]
+	}
+
+	// Get available expiries if none provided
+	if expiry == "" {
+		expiries, err := fetchUpstoxExpiries(instrKey, token)
+		if err == nil && len(expiries) > 0 {
+			expiry = expiries[0] // nearest expiry
+		}
+	}
+
+	params := map[string]string{
+		"instrument_key": instrKey,
+		"expiry_date":    expiry,
+	}
+
+	data, err := upstoxGet("/v2/option/chain", token, params)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	rawData, ok := data["data"].([]interface{})
+	if !ok {
+		return nil, 0, 0, fmt.Errorf("no option chain data")
+	}
+
+	var strikes []OptionStrike
+	var totalCEOI, totalPEOI float64
+
+	for _, item := range rawData {
+		m, ok := item.(map[string]interface{})
+		if !ok { continue }
+
+		sp := 0.0
+		if v, ok := m["strike_price"].(float64); ok { sp = v }
+
+		strike := OptionStrike{StrikePrice: round2(sp)}
+
+		if ce, ok := m["call_options"].(map[string]interface{}); ok {
+			strike.CE = parseOptionContract(ce)
+			totalCEOI += strike.CE.OI
+		}
+		if pe, ok := m["put_options"].(map[string]interface{}); ok {
+			strike.PE = parseOptionContract(pe)
+			totalPEOI += strike.PE.OI
+		}
+		strikes = append(strikes, strike)
+	}
+
+	pcr := 0.0
+	if totalCEOI > 0 { pcr = round2(totalPEOI / totalCEOI) }
+
+	// Max pain = strike where sum of ITM payoffs is minimum
+	maxPain := calcMaxPainFromStrikes(strikes)
+
+	return strikes, pcr, maxPain, nil
+}
+
+func parseOptionContract(m map[string]interface{}) *OptionContract {
+	toF := func(key string) float64 {
+		if v, ok := m[key].(float64); ok { return round2(v) }
+		return 0
+	}
+
+	oc := &OptionContract{
+		LTP:    toF("last_price"),
+		OI:     toF("open_interest"),
+		OIChg:  toF("net_change_in_oi"),
+		Volume: toF("volume"),
+		IV:     toF("implied_volatility"),
+		Bid:    toF("top_bid_price"),
+		Ask:    toF("top_ask_price"),
+	}
+
+	if greeks, ok := m["greeks"].(map[string]interface{}); ok {
+		toFG := func(key string) float64 {
+			if v, ok := greeks[key].(float64); ok { return round2(v) }
+			return 0
+		}
+		oc.Delta = toFG("delta")
+		oc.Theta = toFG("theta")
+		oc.Gamma = toFG("gamma")
+		oc.Vega  = toFG("vega")
+	}
+	return oc
+}
+
+func calcMaxPainFromStrikes(strikes []OptionStrike) float64 {
+	if len(strikes) == 0 { return 0 }
+	minPain := math.MaxFloat64
+	maxPainStrike := strikes[0].StrikePrice
+
+	for _, s := range strikes {
+		// Total pain = sum of ITM call + put payoffs at this expiry
+		pain := 0.0
+		for _, other := range strikes {
+			if other.CE != nil && s.StrikePrice > other.StrikePrice {
+				pain += (s.StrikePrice - other.StrikePrice) * other.CE.OI
+			}
+			if other.PE != nil && s.StrikePrice < other.StrikePrice {
+				pain += (other.StrikePrice - s.StrikePrice) * other.PE.OI
+			}
+		}
+		if pain < minPain {
+			minPain = pain
+			maxPainStrike = s.StrikePrice
+		}
+	}
+	return maxPainStrike
+}
+
+// fetchUpstoxExpiries gets available option expiry dates
+func fetchUpstoxExpiries(instrKey, token string) ([]string, error) {
+	data, err := upstoxGet("/v2/option/contract", token, map[string]string{
+		"instrument_key": instrKey,
+	})
+	if err != nil { return nil, err }
+
+	rawData, ok := data["data"].([]interface{})
+	if !ok { return nil, fmt.Errorf("no expiry data") }
+
+	seen := make(map[string]bool)
+	var expiries []string
+	for _, item := range rawData {
+		m, ok := item.(map[string]interface{})
+		if !ok { continue }
+		if exp, ok := m["expiry"].(string); ok && !seen[exp] {
+			seen[exp] = true
+			expiries = append(expiries, exp)
+		}
+	}
+	return expiries, nil
+}
+
 // Symbol → Instrument key map
 var symbolKeyMap = map[string]string{
 	"ABB":	"NSE_EQ|INE117A01022",
@@ -444,6 +608,86 @@ var symbolKeyMap = map[string]string{
 	"ZOMATO":	"NSE_EQ|INE758T01015",
 }
 
+
+// fetchRealCircuitLimits — real per-stock circuit limits from Upstox Full Quote
+// NSE assigns 2/5/10/20% per stock; F&O stocks have dynamic bands
+// Returns upper_circuit_limit and lower_circuit_limit in rupees
+func fetchRealCircuitLimits(instrumentKey, token string) (*CircuitLimits, float64, float64, error) {
+	data, err := upstoxGet("/v2/market-quote/quotes", token, map[string]string{
+		"instrument_key": instrumentKey,
+	})
+	if err != nil { return nil, 0, 0, err }
+
+	d, ok := data["data"].(map[string]interface{})
+	if !ok { return nil, 0, 0, fmt.Errorf("no data") }
+
+	for _, v := range d {
+		m, ok := v.(map[string]interface{})
+		if !ok { continue }
+
+		toF := func(key string) float64 {
+			if x, ok := m[key].(float64); ok { return round2(x) }
+			return 0
+		}
+
+		ucl := toF("upper_circuit_limit")
+		lcl := toF("lower_circuit_limit")
+		price := toF("last_price")
+		h52  := toF("52_week_high")
+		l52  := toF("52_week_low")
+
+		cl := &CircuitLimits{}
+		if ucl > 0 && lcl > 0 && price > 0 {
+			// Use actual limits from NSE via Upstox
+			cl.Upper5  = ucl
+			cl.Lower5  = lcl
+			// Also derive approximate bands for display
+			pctUp := (ucl - price) / price
+			pctDn := (price - lcl) / price
+			cl.Upper10 = round2(price * (1 + pctUp*2))
+			cl.Lower10 = round2(price * (1 - pctDn*2))
+			cl.Upper20 = ucl // show actual as 20% band too
+			cl.Lower20 = lcl
+		}
+
+		return cl, h52, l52, nil
+	}
+	return nil, 0, 0, fmt.Errorf("quote not found")
+}
+
+// fetchRealCircuitLimitsBatch — fetch for multiple instruments (up to 500)
+func fetchRealCircuitLimitsBatch(instrumentKeys []string, token string) (map[string]*CircuitLimits, error) {
+	if len(instrumentKeys) == 0 { return nil, nil }
+	// Upstox supports comma-separated instrument_key
+	joined := strings.Join(instrumentKeys, ",")
+	data, err := upstoxGet("/v2/market-quote/quotes", token, map[string]string{
+		"instrument_key": joined,
+	})
+	if err != nil { return nil, err }
+
+	d, ok := data["data"].(map[string]interface{})
+	if !ok { return nil, fmt.Errorf("no data") }
+
+	result := make(map[string]*CircuitLimits)
+	for key, v := range d {
+		m, ok := v.(map[string]interface{})
+		if !ok { continue }
+		toF := func(k string) float64 {
+			if x, ok := m[k].(float64); ok { return round2(x) }
+			return 0
+		}
+		ucl := toF("upper_circuit_limit")
+		lcl := toF("lower_circuit_limit")
+		if ucl > 0 && lcl > 0 {
+			result[key] = &CircuitLimits{
+				Upper5: ucl, Lower5: lcl,
+				Upper10: round2(ucl*1.05), Lower10: round2(lcl*0.95),
+				Upper20: ucl, Lower20: lcl,
+			}
+		}
+	}
+	return result, nil
+}
 
 // fetchFullQuote — real-time OHLC + LTP + volume + circuit limits
 func fetchFullQuote(instrumentKey, token string) (map[string]interface{}, error) {

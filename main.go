@@ -180,15 +180,29 @@ func buildAnalysis(symbol, instrKey string, candles []Candle, token string) *Ana
 	pd := calcPDHPDL(candles)
 	gap := calcGapAnalysis(candles, pd)
 	volComp := calcVolumeComparison(candles)
-	circuit := calcCircuitLimits(last.Close)
+	// 52W from candles (fallback)
 	high52, low52 := calc52W(candles)
+
+	// Real circuit limits + 52W from Upstox Full Quote
+	circuit := calcCircuitLimits(last.Close) // fallback
+	realCL, realH52, realL52, clErr := fetchRealCircuitLimits(instrKey, token)
+	if clErr == nil && realCL != nil {
+		circuit = realCL
+	}
+	if realH52 > 0 { high52 = realH52 }
+	if realL52 > 0 { low52  = realL52  }
 	ai := calcAIVerdict(last.Close, vwap, ema20, ema50, rsi, macd, supertrend, adx, volRatio, atr)
 
-	// Try to get real-time LTP from Upstox market quote
+	// Try live price — first check V3 feed cache, then fall back to REST LTP
 	livePrice := last.Close
-	if token != os.Getenv("UPSTOX_SANDBOX_ACCESS_TOKEN") && token != "" {
+	if tick := upstoxFeed.GetTick(instrKey); tick != nil && tick.LTP > 0 {
+		livePrice = tick.LTP // instant from WebSocket feed
+		log.Printf("[analyze] %s live price from V3 feed: %.2f", symbol, livePrice)
+	} else if token != "" {
 		if ltp, err := fetchLTP(instrKey, token); err == nil && ltp > 0 {
 			livePrice = ltp
+			// Subscribe this symbol to feed for next time
+			upstoxFeed.Subscribe([]string{instrKey})
 		}
 	}
 
@@ -368,56 +382,58 @@ func handleSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ── /api/optionchain ──────────────────────────────────────────────────────────
+// ── /api/optionchain — Upstox V2 (not NSE — more reliable) ──────────────────
 func handleOptionChain(w http.ResponseWriter, r *http.Request) {
 	symbol := strings.ToUpper(r.URL.Query().Get("symbol"))
 	if symbol == "" { symbol = "NIFTY" }
-	cKey := "oc:" + symbol
+	expiry := r.URL.Query().Get("expiry")
+	token  := getToken(r)
+
+	cKey := "oc:" + symbol + ":" + expiry
 	if cached, ok := cache.Get(cKey); ok {
 		writeJSON(w, 200, cached); return
 	}
 
-	// Try NSE India API
-	client := &http.Client{Timeout: 10 * time.Second}
-	headers := map[string]string{
-		"User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-		"Accept":          "application/json",
-		"Referer":         "https://www.nseindia.com",
-		"Accept-Language": "en-US,en;q=0.9",
+	strikes, pcr, maxPain, err := fetchUpstoxOptionChain(symbol, expiry, token)
+	if err != nil {
+		log.Printf("[OC] Upstox failed: %v", err)
+		writeJSON(w, 200, map[string]interface{}{
+			"status": "error",
+			"message": "Option chain unavailable: " + err.Error(),
+		})
+		return
 	}
 
-	// Get session cookies
-	cookies := ""
-	homeReq, _ := http.NewRequest("GET", "https://www.nseindia.com/", nil)
-	for k, v := range headers { homeReq.Header.Set(k, v) }
-	if homeResp, err := client.Do(homeReq); err == nil {
-		for _, c := range homeResp.Cookies() {
-			if cookies != "" { cookies += "; " }
-			cookies += c.Name + "=" + c.Value
-		}
-		homeResp.Body.Close()
+	result := map[string]interface{}{
+		"status":  "success",
+		"symbol":  symbol,
+		"expiry":  expiry,
+		"pcr":     pcr,
+		"maxPain": maxPain,
+		"data":    strikes,
+		"source":  "UPSTOX",
 	}
+	cache.Set(cKey, result, 30*time.Second)
+	writeJSON(w, 200, result)
+}
 
-	isIndex := symbol == "NIFTY" || symbol == "BANKNIFTY" || symbol == "FINNIFTY"
-	ocURL := "https://www.nseindia.com/api/option-chain-equities?symbol=" + symbol
-	if isIndex { ocURL = "https://www.nseindia.com/api/option-chain-indices?symbol=" + symbol }
+// ── /api/option/expiries ───────────────────────────────────────────────────
+func handleOptionExpiries(w http.ResponseWriter, r *http.Request) {
+	symbol := strings.ToUpper(r.URL.Query().Get("symbol"))
+	if symbol == "" { symbol = "NIFTY" }
+	token  := getToken(r)
+	instrKey := resolveInstrumentKey(symbol)
 
-	ocReq, _ := http.NewRequest("GET", ocURL, nil)
-	for k, v := range headers { ocReq.Header.Set(k, v) }
-	if cookies != "" { ocReq.Header.Set("Cookie", cookies) }
+	cKey := "exp:" + symbol
+	if cached, ok := cache.Get(cKey); ok { writeJSON(w, 200, cached); return }
 
-	ocResp, err := client.Do(ocReq)
+	expiries, err := fetchUpstoxExpiries(instrKey, token)
 	if err != nil {
 		writeJSON(w, 200, map[string]interface{}{"status": "error", "message": err.Error()})
 		return
 	}
-	defer ocResp.Body.Close()
-
-	var ocData map[string]interface{}
-	json.NewDecoder(ocResp.Body).Decode(&ocData)
-
-	result := map[string]interface{}{"status": "success", "symbol": symbol, "data": ocData}
-	cache.Set(cKey, result, 30*time.Second)
+	result := map[string]interface{}{"status": "success", "symbol": symbol, "expiries": expiries}
+	cache.Set(cKey, result, 10*time.Minute)
 	writeJSON(w, 200, result)
 }
 
@@ -624,7 +640,8 @@ func main() {
 		"/auth/url":         handleAuthURL,
 		"/auth/callback":    handleAuthCallback,
 		"/api/search":       handleSearch,
-		"/api/optionchain":  handleOptionChain,
+		"/api/optionchain":      handleOptionChain,
+		"/api/option/expiries":  handleOptionExpiries,
 		"/api/assistant":    handleAssistant,
 		"/session":          handleSession,
 		"/news":             handleNewsRoute,
@@ -651,7 +668,14 @@ func main() {
 		return "✗ NOT SET"
 	}())
 
-	// Start WebSocket price broadcaster
+	// Start Upstox V3 WebSocket Market Feed (replaces REST polling for live prices)
+	liveToken := os.Getenv("UPSTOX_SANDBOX_ACCESS_TOKEN")
+	if liveToken != "" {
+		StartUpstoxFeed(liveToken)
+		log.Printf("   Upstox V3 Feed: starting...")
+	}
+
+	// Start WebSocket price broadcaster (fallback for non-feed symbols)
 	startPriceBroadcaster()
 
 	if err := http.ListenAndServe(":"+port, mux); err != nil {

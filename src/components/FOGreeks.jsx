@@ -20,8 +20,23 @@ export default function FOGreeks({ data }) {
       .then(r => r.json())
       .then(d => {
         if (d.status === 'success' && d.data?.length > 0) {
-          setRealOC(d)
-          console.log(`[F&O] Real NSE data: ${d.data.length} strikes, PCR=${d.pcr}`)
+          // Transform Upstox format: {strikePrice, CE:{ltp,oi,iv,delta,...}, PE:{...}}
+          const transformed = {
+            ...d,
+            pcr: d.pcr,
+            maxPain: d.maxPain,
+            data: d.data.map(s => ({
+              strike: s.strikePrice,
+              ce: s.CE ? { ltp:s.CE.ltp, oi:s.CE.oi, iv:s.CE.iv, delta:s.CE.delta,
+                           theta:s.CE.theta, gamma:s.CE.gamma, vega:s.CE.vega,
+                           oiChange:s.CE.oiChange, volume:s.CE.volume } : null,
+              pe: s.PE ? { ltp:s.PE.ltp, oi:s.PE.oi, iv:s.PE.iv, delta:s.PE.delta,
+                           theta:s.PE.theta, gamma:s.PE.gamma, vega:s.PE.vega,
+                           oiChange:s.PE.oiChange, volume:s.PE.volume } : null,
+            }))
+          }
+          setRealOC(transformed)
+          console.log(`[F&O] Upstox live OC: ${d.data.length} strikes, PCR=${d.pcr}, MaxPain=${d.maxPain}, Source=${d.source}`)
         }
       })
       .catch(e => console.warn('[F&O] NSE fetch failed:', e.message))
@@ -96,7 +111,7 @@ export default function FOGreeks({ data }) {
             SPOT ₹{fmt(data.price)} · ATM {atm}
           </span>
           {ocLoading && <span style={{fontSize:10,color:'var(--amber)',fontFamily:"'DM Mono',monospace"}}>● Fetching NSE...</span>}
-          {realOC && <span style={{fontSize:10,color:'var(--green)',fontFamily:"'DM Mono',monospace"}}>● NSE Live OC</span>}
+          {realOC && <span style={{fontSize:10,color:'var(--green)',fontFamily:"'DM Mono',monospace"}}>● Upstox Live OC ✓</span>}
         </div>
       </div>
 
