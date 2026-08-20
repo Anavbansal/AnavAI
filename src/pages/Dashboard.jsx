@@ -125,7 +125,7 @@ export default function Dashboard() {
   const ikey = data?.instrumentKey || ''
   const G = {gap:12}
 
-  const chart = <CandleChart data={data} ai={ai} onTfChange={handleTfChange} activeTfi={curTfi}/>
+  const chart = <Suspense fallback={<TabLoader/>}><CandleChart data={data} ai={ai} onTfChange={handleTfChange} activeTfi={curTfi}/></Suspense>
   const insights = <AIInsights ai={ai} data={data} loading={loading}/>
   const news = <NewsPanel symbol={sym} instrumentKey={ikey}/>
 
@@ -210,7 +210,7 @@ export default function Dashboard() {
           isMobile ? (
             <div style={{display:'flex',flexDirection:'column',...G}}>
               {chart}
-              <Intraday data={data} ai={ai}/>
+              <Suspense fallback={<TabLoader/>}><Suspense fallback={<TabLoader/>}><Intraday data={data} ai={ai}/></Suspense></Suspense>
               {insights}
             </div>
           ) : (
@@ -226,7 +226,7 @@ export default function Dashboard() {
           isMobile ? (
             <div style={{display:'flex',flexDirection:'column',...G}}>
               {chart}
-              <Delivery data={data} ai={ai}/>
+              <Suspense fallback={<TabLoader/>}><Suspense fallback={<TabLoader/>}><Delivery data={data} ai={ai}/></Suspense></Suspense>
               {news}
             </div>
           ) : (
@@ -240,7 +240,7 @@ export default function Dashboard() {
         {/* ── F&O ── */}
         {tab==='fo' && !loading && (
           <div style={{display:'flex',flexDirection:'column',...G}}>
-            <FOGreeks data={data}/>
+            <Suspense fallback={<TabLoader/>}><FOGreeks data={data}/></Suspense>
             {isMobile ? <>{insights}<PricePanel data={data} ai={ai}/></> : (
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',...G}}>
                 {insights}<PricePanel data={data} ai={ai}/>
@@ -255,7 +255,7 @@ export default function Dashboard() {
         {tab==='risk'     && <Suspense fallback={<TabLoader/>}><RiskCalculator/></Suspense>}
         {tab==='portfolio'&& <Suspense fallback={<TabLoader/>}><Portfolio onSelectSymbol={handleSelectSymbol}/></Suspense>}
         {tab==='pf'        && <Suspense fallback={<TabLoader/>}><PersonalFinance/></Suspense>}
-        {tab==='mf'       && <MutualFunds/>}
+        {tab==='mf'       && <Suspense fallback={<TabLoader/>}><MutualFunds/></Suspense>}
 
       </main>
 
