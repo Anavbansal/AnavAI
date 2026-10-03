@@ -21,6 +21,7 @@ const MarketScanner      = lazy(() => import('../components/MarketScanner'))
 const PriceAlerts        = lazy(() => import('../components/PriceAlerts'))
 const EconomicCalendar   = lazy(() => import('../components/EconomicCalendar'))
 const PersonalFinance    = lazy(() => import('../components/PersonalFinance'))
+const IPOTracker         = lazy(() => import('../components/IPOTracker'))
 
 // Suspense fallback
 function TabLoader() {
@@ -59,7 +60,7 @@ const ALL_TABS = [
   {id:'mf',        label:'Mutual Funds',icon:'🏦'},
 ]
 
-const NO_REFETCH = new Set(['portfolio','mf','scanner','alerts','calendar','risk','pf'])
+const NO_REFETCH = new Set(['portfolio','mf','scanner','alerts','calendar','risk','pf','ipo'])
 const MODE = {overview:'tech',intraday:'intraday',delivery:'delivery',fo:'fo'}
 
 // Hook: detect mobile
@@ -256,6 +257,7 @@ export default function Dashboard() {
         {tab==='portfolio'&& <Suspense fallback={<TabLoader/>}><Portfolio onSelectSymbol={handleSelectSymbol}/></Suspense>}
         {tab==='pf'        && <Suspense fallback={<TabLoader/>}><PersonalFinance/></Suspense>}
         {tab==='mf'       && <Suspense fallback={<TabLoader/>}><MutualFunds/></Suspense>}
+        {tab==='ipo'      && <Suspense fallback={<TabLoader/>}><IPOTracker/></Suspense>}
 
       </main>
 
@@ -296,6 +298,7 @@ export default function Dashboard() {
                 {id:'portfolio',label:'Portfolio',  icon:'💼'},
                 {id:'mf',       label:'MF',         icon:'🏦'},
                 {id:'pf',       label:'My Finance', icon:'💼'},
+                {id:'ipo',      label:'IPO',        icon:'🚀'},
               ].map(t=>(
                 <button key={t.id}
                   onClick={()=>{ changeTab(t.id); setMoreOpen(false); }}
