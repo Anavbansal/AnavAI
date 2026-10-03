@@ -1,6 +1,7 @@
 package main
 
 import (
+	"anavai/broker"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -680,6 +681,8 @@ func main() {
 		"/health":           func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok", "service": "AnavAI Go Server"}) },
 		"/ws":               handleWebSocket,
 		"/auth/refresh":      handleAuthRefresh,
+		"/auth/angelone/login":  broker.HandleAngelOneLogin,
+		"/auth/angelone/status": broker.HandleAngelOneStatus,
 		"/auth/exchange":     handleAuthExchange,
 		"/api/holdings":      handleHoldings,
 		"/api/quote":         handleQuote,
@@ -698,6 +701,22 @@ func main() {
 		if os.Getenv("UPSTOX_CLIENT_ID") != "" { return "✓ SANDBOX" }
 		return "✗ NOT SET"
 	}())
+
+	// Register brokers
+	// Upstox — token provided per-request via Authorization header
+	// Angel One — auto-login if env vars set
+	if os.Getenv("ANGELONE_API_KEY") != "" {
+		if err := broker.AngelOne.Login(); err != nil {
+			log.Printf("   Angel One: login failed — %v", err)
+			log.Printf("   Angel One: will retry on /auth/angelone/login")
+		} else {
+			broker.Register(broker.AngelOne)
+			broker.AngelOne.StartAutoRefresh()
+			log.Printf("   Angel One: ✓ connected")
+		}
+	} else {
+		log.Printf("   Angel One: env vars not set (optional)")
+	}
 
 	// Start Upstox V3 WebSocket Market Feed
 	// Token is provided per-user via Authorization header when they analyze
