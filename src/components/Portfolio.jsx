@@ -1,4 +1,5 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
+import { API_BASE_URL } from '../config'
 
 const f = (n,d=2) => Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:d,maximumFractionDigits:d})
 const DEMO = [
@@ -10,7 +11,35 @@ const DEMO = [
 ]
 
 export default function Portfolio({ onSelectSymbol }) {
-  const [holdings, setHoldings] = useState(DEMO)
+  const [holdings, setHoldings] = useState(() => {
+    // Load from localStorage if saved
+    try {
+      const saved = localStorage.getItem('anav_portfolio')
+      return saved ? JSON.parse(saved) : DEMO
+    } catch { return DEMO }
+  })
+
+  // Fetch live LTP for all holdings
+  useEffect(() => {
+    async function fetchLivePrices() {
+      const token = localStorage.getItem('upstox_access_token') || ''
+      if (!token) return
+      const updated = await Promise.all(holdings.map(async h => {
+        try {
+          const res = await fetch(`${API_BASE_URL}/analyze`, {
+            method: 'POST',
+            headers: { 'Content-Type':'application/json', 'Authorization':`Bearer ${token}` },
+            body: JSON.stringify({ symbol: h.symbol, resolution: '5' }),
+          })
+          const data = await res.json()
+          const ltp = data?.data?.price || data?.price
+          return ltp ? { ...h, ltp } : h
+        } catch { return h }
+      }))
+      setHoldings(updated)
+    }
+    fetchLivePrices()
+  }, [])
   const [form, setForm] = useState({sym:'',qty:'',avg:''})
   const [showForm, setShowForm] = useState(false)
 
@@ -26,10 +55,20 @@ export default function Portfolio({ onSelectSymbol }) {
 
   function add() {
     if (!form.sym||!form.qty||!form.avg) return
-    setHoldings(p=>[...p,{symbol:form.sym.toUpperCase(),qty:+form.qty,avgPrice:+form.avg,ltp:+form.avg*1.02}])
+    setHoldings(p => {
+      const updated = [...p, {symbol:form.sym.toUpperCase(),qty:+form.qty,avgPrice:+form.avg,ltp:+form.avg}]
+      localStorage.setItem('anav_portfolio', JSON.stringify(updated))
+      return updated
+    })
     setForm({sym:'',qty:'',avg:''}); setShowForm(false)
   }
-  function remove(sym) { setHoldings(p=>p.filter(h=>h.symbol!==sym)) }
+  function remove(sym) {
+    setHoldings(p => {
+      const updated = p.filter(h=>h.symbol!==sym)
+      localStorage.setItem('anav_portfolio', JSON.stringify(updated))
+      return updated
+    })
+  }
 
   return (
     <div className="card anim-fade">
@@ -107,7 +146,7 @@ export default function Portfolio({ onSelectSymbol }) {
       </div>
 
       <div style={{padding:'10px 16px',borderTop:'1px solid var(--border)',fontSize:11,color:'var(--text3)'}}>
-        Prices are illustrative. Connect Upstox for live portfolio data.
+        Live prices from Upstox. Click a symbol to analyze.
       </div>
     </div>
   )

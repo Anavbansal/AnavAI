@@ -31,7 +31,7 @@ type SearchResult struct {
 func handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" {
-		writeJSON(w, 200, map[string]interface{}{"results": []SearchResult{}})
+		writeJSON(w, 200, map[string]interface{}{"results": []interface{}{}})
 		return
 	}
 
@@ -92,6 +92,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		merged = merged[:20]
 	}
 
+	if merged == nil { merged = []SearchResult{} }
 	resp := map[string]interface{}{"results": merged}
 	cache.Set(cKey, resp, 5*time.Minute)
 	writeJSON(w, 200, resp)
