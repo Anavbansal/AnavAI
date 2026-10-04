@@ -12,7 +12,6 @@ const CandleChart        = lazy(() => import('../components/CandleChart'))
 const Intraday           = lazy(() => import('../components/Intraday'))
 const Delivery           = lazy(() => import('../components/Delivery'))
 const FOGreeks           = lazy(() => import('../components/FOGreeks'))
-const Portfolio          = lazy(() => import('../components/Portfolio'))
 const MutualFunds        = lazy(() => import('../components/MutualFunds'))
 const CompanyFundamentals= lazy(() => import('../components/CompanyFundamentals'))
 const AIAssistant        = lazy(() => import('../components/AIAssistant'))
@@ -56,7 +55,7 @@ const ALL_TABS = [
   {id:'alerts',    label:'Alerts',      icon:'🔔'},
   {id:'calendar',  label:'Calendar',    icon:'📅'},
   {id:'risk',      label:'Risk Calc',   icon:'🎯'},
-  {id:'portfolio', label:'Portfolio',   icon:'💼'},
+  {id:'portfolio', label:'My Holdings', icon:'💼'},
   {id:'mf',        label:'Mutual Funds',icon:'🏦'},
 ]
 
@@ -266,7 +265,7 @@ export default function Dashboard() {
         {tab==='alerts'   && <Suspense fallback={<TabLoader/>}><PriceAlerts data={data}/></Suspense>}
         {tab==='calendar' && <Suspense fallback={<TabLoader/>}><EconomicCalendar/></Suspense>}
         {tab==='risk'     && <Suspense fallback={<TabLoader/>}><RiskCalculator/></Suspense>}
-        {tab==='portfolio'&& <Suspense fallback={<TabLoader/>}><Portfolio onSelectSymbol={handleSelectSymbol}/></Suspense>}
+        {tab==='portfolio'&& <Suspense fallback={<TabLoader/>}><PersonalFinance onAnalyze={(inp,tf)=>{setSym(typeof inp==='string'?inp:inp.symbol);handleAnalyze(inp,tf||'15')}}/></Suspense>}
         {tab==='pf'        && <Suspense fallback={<TabLoader/>}><PersonalFinance/></Suspense>}
         {tab==='mf'       && <Suspense fallback={<TabLoader/>}><MutualFunds/></Suspense>}
         {tab==='ipo'      && <Suspense fallback={<TabLoader/>}><IPOTracker/></Suspense>}
@@ -307,7 +306,7 @@ export default function Dashboard() {
                 {id:'alerts',   label:'Alerts',     icon:'🔔'},
                 {id:'calendar', label:'Calendar',   icon:'📅'},
                 {id:'risk',     label:'Risk Calc',  icon:'🎯'},
-                {id:'portfolio',label:'Portfolio',  icon:'💼'},
+                {id:'portfolio',label:'My Holdings',icon:'💼'},
                 {id:'mf',       label:'MF',         icon:'🏦'},
                 {id:'pf',       label:'My Finance', icon:'💼'},
                 {id:'ipo',      label:'IPO',        icon:'🚀'},
