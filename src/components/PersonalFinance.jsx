@@ -129,6 +129,141 @@ function analyzeRisk(holding, ltp, analysis) {
   }
 }
 
+
+// ── Holding Row (table format) ───────────────────────────────────────────────
+function HoldingRow({ holding, idx, onSelect }) {
+  const [ltp,      setLtp]      = useState(holding.ltp || null)
+  const [analysis, setAnalysis] = useState(null)
+  const [loading,  setLoading]  = useState(true)
+
+  useEffect(() => {
+    async function fetchData() {
+      setLoading(true)
+      try {
+        const token = localStorage.getItem('upstox_access_token') || ''
+        const headers = { 'Content-Type':'application/json' }
+        if (token) headers['Authorization'] = `Bearer ${token}`
+        const res = await fetch(`${API_BASE_URL}/analyze`, {
+          method:'POST', headers,
+          body: JSON.stringify({
+            symbol: holding.symbol, instrumentKey: holding.instrKey,
+            resolution: '15', mode: 'tech',
+          }),
+        })
+        const data = await res.json()
+        const d = data?.data ?? data
+        if (d?.price) { setLtp(d.price); setAnalysis(d) }
+      } catch {}
+      setLoading(false)
+    }
+    // Stagger requests to avoid hammering server
+    const timer = setTimeout(fetchData, idx * 400)
+    return () => clearTimeout(timer)
+  }, [holding.symbol, idx])
+
+  const risk    = (ltp || holding.ltp) ? analyzeRisk(holding, ltp || holding.ltp, analysis) : null
+  const ltpVal  = ltp || holding.ltp || 0
+  const invested = holding.avg * holding.qty
+  const current  = ltpVal * holding.qty
+  const pnlAmt   = current - invested
+  const pnlPct   = holding.avg > 0 ? (ltpVal - holding.avg) / holding.avg * 100 : 0
+  const bull     = pnlAmt >= 0
+
+  return (
+    <div onClick={() => onSelect(holding, ltpVal, analysis, risk)}
+      style={{
+        display:'grid', gridTemplateColumns:'2fr 1fr 1fr 1fr 1fr 1.5fr 1.5fr',
+        padding:'11px 16px', cursor:'pointer',
+        borderBottom:'1px solid var(--border)',
+        background: idx%2===0 ? 'transparent' : 'var(--bg2)04',
+        transition:'background .15s',
+        borderLeft: risk ? `3px solid ${risk.riskColor}` : '3px solid transparent',
+      }}
+      onMouseEnter={e => e.currentTarget.style.background='var(--accent)08'}
+      onMouseLeave={e => e.currentTarget.style.background=idx%2===0?'transparent':'var(--bg2)04'}
+    >
+      {/* Symbol + sector */}
+      <div>
+        <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+          <span style={{ fontFamily:"'Syne',sans-serif", fontWeight:700, fontSize:13, color:'var(--text)' }}>
+            {holding.symbol}
+          </span>
+          <span style={{ fontSize:9, padding:'1px 6px', borderRadius:10, fontWeight:600,
+            background:(SECTOR_COLOR[holding.sector]||'#666')+'20',
+            color:SECTOR_COLOR[holding.sector]||'#888' }}>
+            {holding.sector}
+          </span>
+        </div>
+        <div style={{ fontSize:10, color:'var(--text3)', marginTop:1 }}>{holding.qty} shares</div>
+      </div>
+
+      {/* Qty */}
+      <div style={{ textAlign:'right', fontFamily:"'DM Mono',monospace", fontSize:12,
+        color:'var(--text)', alignSelf:'center' }}>{holding.qty}</div>
+
+      {/* Avg */}
+      <div style={{ textAlign:'right', fontFamily:"'DM Mono',monospace", fontSize:12,
+        color:'var(--text2)', alignSelf:'center' }}>₹{r2(holding.avg)}</div>
+
+      {/* LTP */}
+      <div style={{ textAlign:'right', alignSelf:'center' }}>
+        {loading ? (
+          <span style={{ display:'inline-block', width:12, height:12, borderRadius:'50%',
+            border:'2px solid var(--border)', borderTopColor:'var(--accent)',
+            animation:'spin 1s linear infinite' }}/>
+        ) : (
+          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:700,
+            color: ltpVal >= holding.avg ? 'var(--green)' : 'var(--red)' }}>
+            ₹{r2(ltpVal)}
+          </span>
+        )}
+      </div>
+
+      {/* Invested */}
+      <div style={{ textAlign:'right', fontFamily:"'DM Mono',monospace", fontSize:12,
+        color:'var(--text2)', alignSelf:'center' }}>
+        ₹{Math.round(invested).toLocaleString('en-IN')}
+      </div>
+
+      {/* P&L */}
+      <div style={{ textAlign:'right', alignSelf:'center' }}>
+        {ltpVal > 0 && (
+          <>
+            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:700,
+              color: bull ? 'var(--green)' : 'var(--red)' }}>
+              {bull?'+':''}{Math.round(pnlAmt).toLocaleString('en-IN')}
+            </div>
+            <div style={{ fontSize:10, color: bull ? 'var(--green)' : 'var(--red)' }}>
+              ({bull?'+':''}{r2(pnlPct)}%)
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Risk + Action */}
+      <div style={{ textAlign:'right', alignSelf:'center' }}>
+        {risk ? (
+          <div>
+            <div style={{ fontSize:11, fontWeight:700, color:risk.riskColor }}>
+              {risk.riskEmoji} {risk.riskLevel}
+            </div>
+            <div style={{ fontSize:9, color:risk.actionColor, fontWeight:600 }}>
+              {risk.action.split('/')[0].trim()}
+            </div>
+            {risk.stopLoss > 0 && (
+              <div style={{ fontSize:9, color:'var(--text3)' }}>
+                SL: ₹{risk.stopLoss}
+              </div>
+            )}
+          </div>
+        ) : !loading ? (
+          <span style={{ fontSize:10, color:'var(--text3)' }}>—</span>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 // ── Holding Card ─────────────────────────────────────────────────────────────
 function HoldingCard({ holding, onSelect }) {
   const [ltp,      setLtp]      = useState(null)
@@ -611,11 +746,44 @@ export default function PersonalFinance({ onAnalyze }) {
         ))}
       </div>
 
-      {/* Holdings grid */}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))', gap:12 }}>
-        {holdings.map(h => (
-          <HoldingCard key={h.symbol} holding={h} onSelect={handleSelect}/>
+      {/* Holdings — Table view shows ALL stocks */}
+      <div style={{ background:'var(--surface)', border:'1px solid var(--border)', borderRadius:12, overflow:'hidden' }}>
+        {/* Table header */}
+        <div style={{ display:'grid', gridTemplateColumns:'2fr 1fr 1fr 1fr 1fr 1.5fr 1.5fr',
+          padding:'10px 16px', borderBottom:'1px solid var(--border)',
+          fontSize:10, fontWeight:700, color:'var(--text3)', letterSpacing:.8,
+          textTransform:'uppercase', background:'var(--bg2)' }}>
+          <span>Stock</span>
+          <span style={{textAlign:'right'}}>Qty</span>
+          <span style={{textAlign:'right'}}>Avg</span>
+          <span style={{textAlign:'right'}}>LTP</span>
+          <span style={{textAlign:'right'}}>Invested</span>
+          <span style={{textAlign:'right'}}>P&amp;L</span>
+          <span style={{textAlign:'right'}}>Risk / Action</span>
+        </div>
+
+        {/* Rows */}
+        {holdings.map((h, idx) => (
+          <HoldingRow key={h.symbol} holding={h} idx={idx} onSelect={handleSelect}/>
         ))}
+
+        {/* Total row */}
+        <div style={{ display:'grid', gridTemplateColumns:'2fr 1fr 1fr 1fr 1fr 1.5fr 1.5fr',
+          padding:'12px 16px', background:'var(--bg2)', borderTop:'2px solid var(--border)',
+          fontSize:13, fontWeight:700 }}>
+          <span style={{color:'var(--text)'}}>TOTAL ({holdings.length} stocks)</span>
+          <span/>
+          <span/>
+          <span/>
+          <span style={{textAlign:'right',fontFamily:"'DM Mono',monospace",color:'var(--text)'}}>
+            ₹{Math.round(holdings.reduce((s,h)=>s+h.avg*h.qty,0)).toLocaleString('en-IN')}
+          </span>
+          <span style={{textAlign:'right',fontFamily:"'DM Mono',monospace",
+            color: summary && summary.pnl >= 0 ? 'var(--green)' : 'var(--red)'}}>
+            {summary ? `${summary.pnl>=0?'+':''}₹${Math.abs(Math.round(summary.pnl)).toLocaleString('en-IN')}` : '—'}
+          </span>
+          <span/>
+        </div>
       </div>
 
       {/* Detail modal */}
