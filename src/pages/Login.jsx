@@ -78,15 +78,31 @@ export default function Login() {
     }
     setAngelStatus('connecting'); setAngelErr('')
     try {
+      // Try browser-side first (no server IP needed for market data)
+      const { angelOneLogin } = await import('../services/angelOneAuth')
       await angelOneLogin(angelCreds)
-      // Save API key for next time (not PIN/TOTP for security)
-      localStorage.setItem('anav_ao_apikey', angelCreds.apiKey)
+      localStorage.setItem('anav_ao_apikey',   angelCreds.apiKey)
+      localStorage.setItem('anav_ao_clientid',  angelCreds.clientId)
       localStorage.setItem('anav_angelone_connected', '1')
       setAngelStatus('done')
-      setTimeout(() => nav('/dashboard'), 1000)
+      setTimeout(() => nav('/dashboard'), 800)
     } catch(err) {
-      setAngelErr(err.message || 'Login failed — check credentials')
-      setAngelStatus('error')
+      // Try server-side as fallback
+      try {
+        const res = await fetch(`${API_BASE_URL}/auth/angelone/login`, { method: 'POST' })
+        const data = await res.json()
+        if (data.status === 'success') {
+          localStorage.setItem('anav_angelone_connected', '1')
+          setAngelStatus('done')
+          setTimeout(() => nav('/dashboard'), 800)
+        } else {
+          setAngelErr(data.message || 'Login failed — check credentials')
+          setAngelStatus('error')
+        }
+      } catch {
+        setAngelErr(err.message || 'Login failed — check API key, MPIN and TOTP secret')
+        setAngelStatus('error')
+      }
     }
   }
 

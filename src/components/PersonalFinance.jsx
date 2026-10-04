@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { API_BASE_URL } from '../config'
-import { getAngelHoldings, isAngelConnected, getAngelAuth } from '../services/angelOneAuth'
 
 const f  = (n,d=0) => Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:d,maximumFractionDigits:d})
 const fc = n => `₹${f(n)}`
@@ -476,45 +475,69 @@ export default function PersonalFinance({ onAnalyze }) {
   const [holdings,   setHoldings]   = useState(HOLDINGS)
   const [summary,    setSummary]    = useState(null)
 
-  // Fetch live holdings from Angel One if connected
+  const [liveLoading, setLiveLoading] = useState(false)
+  const [liveSource,  setLiveSource]  = useState('static') // static|angelone|upstox
+
+  // Fetch live holdings from server (Angel One or Upstox)
   useEffect(() => {
-    async function fetchAngelHoldings() {
-      if (!isAngelConnected()) return
-      try {
-        // Direct browser → Angel One API (no server needed!)
-        const data = await getAngelHoldings()
-        if (data?.holdings?.length > 0) {
-          const merged = data.holdings.map(h => {
-            const local = HOLDINGS.find(l => l.symbol === h.tradingsymbol || l.symbol === h.symboltoken)
-            return {
-              symbol:   h.tradingsymbol || local?.symbol || h.symboltoken,
-              name:     h.symbolname || local?.name || h.tradingsymbol,
-              qty:      parseFloat(h.quantity) || 0,
-              avg:      parseFloat(h.averageprice) || 0,
-              sector:   local?.sector || 'Other',
-              cap:      local?.cap || 'Unknown',
-              instrKey: local?.instrKey || `NSE_EQ|${h.tradingsymbol}`,
-              ltp:      parseFloat(h.ltp) || 0,
-              pnl:      parseFloat(h.profitandloss) || 0,
-            }
-          }).filter(h => h.qty > 0)
-          if (merged.length > 0) setHoldings(merged)
-        }
-        // Total summary
-        if (data?.totalholding) {
+    fetchLiveHoldings()
+  }, [])
+
+  async function fetchLiveHoldings() {
+    setLiveLoading(true)
+    try {
+      const token   = localStorage.getItem('upstox_access_token') || ''
+      const aoConn  = localStorage.getItem('anav_angelone_connected')
+      const broker  = aoConn ? 'angelone' : 'upstox'
+
+      const headers = { 'Content-Type': 'application/json', 'X-Broker': broker }
+      if (token) headers['Authorization'] = `Bearer ${token}`
+
+      const res  = await fetch(`${API_BASE_URL}/api/holdings`, { headers })
+      const data = await res.json()
+
+      if (data.status === 'success' && data.holdings?.length > 0) {
+        setLiveSource(data.broker || broker)
+        const merged = data.holdings.map(h => {
+          const local = HOLDINGS.find(l =>
+            l.symbol === h.symbol ||
+            l.symbol === h.tradingsymbol ||
+            l.isin === h.isin
+          )
+          return {
+            symbol:   h.symbol || h.tradingsymbol || local?.symbol || '',
+            name:     h.name || local?.name || h.symbol || '',
+            qty:      parseFloat(h.quantity || h.qty) || 0,
+            avg:      parseFloat(h.avgBuyPrice || h.averageprice || h.avg) || 0,
+            ltp:      parseFloat(h.ltp) || 0,
+            pnl:      parseFloat(h.pnl || h.profitandloss) || 0,
+            pnlPct:   parseFloat(h.pnlPct || h.pnlpercentage) || 0,
+            sector:   local?.sector || 'Other',
+            cap:      local?.cap || 'Unknown',
+            instrKey: local?.instrKey || `NSE_EQ|${h.symbol || h.tradingsymbol}`,
+          }
+        }).filter(h => h.qty > 0 && h.symbol)
+
+        if (merged.length > 0) setHoldings(merged)
+
+        if (data.totalholding) {
           const t = data.totalholding
           setSummary({
-            invested: parseFloat(t.totalholdingvalue) - parseFloat(t.totalprofitandloss||0),
-            current:  parseFloat(t.totalholdingvalue),
-            pnl:      parseFloat(t.totalprofitandloss||0),
+            invested: parseFloat(t.totalinvvalue || t.totalholdingvalue) || 0,
+            current:  parseFloat(t.totalholdingvalue) || 0,
+            pnl:      parseFloat(t.totalprofitandloss) || 0,
+            pnlPct:   parseFloat(t.totalpnlpercentage) || 0,
           })
         }
-      } catch(e) {
-        console.warn('[PF] Angel One holdings fetch failed:', e.message)
+        console.log(`[PF] Live holdings from ${data.broker}: ${merged.length} stocks`)
+      } else {
+        console.log('[PF] No live holdings — showing static data')
       }
+    } catch(e) {
+      console.warn('[PF] Holdings fetch failed:', e.message)
     }
-    fetchAngelHoldings()
-  }, [])
+    setLiveLoading(false)
+  }
 
   function handleSelect(holding, ltp, analysis, risk) {
     setSelected(holding)
@@ -539,9 +562,25 @@ export default function PersonalFinance({ onAnalyze }) {
           </div>
           <div style={{ fontSize:11, color:'var(--text3)', marginTop:2 }}>
             {holdings.length} stocks · AI risk analysis on every holding
+            {liveLoading && <span style={{color:'var(--accent2)',marginLeft:8}}>⟳ Loading live data...</span>}
+            {!liveLoading && liveSource !== 'static' && (
+              <span style={{color:'var(--green)',marginLeft:8,fontSize:10,fontWeight:700}}>
+                ● LIVE from {liveSource === 'angelone' ? '🟠 Angel One' : '🔵 Upstox'}
+              </span>
+            )}
+            {!liveLoading && liveSource === 'static' && (
+              <span style={{color:'var(--amber)',marginLeft:8,fontSize:10}}>
+                ⚠ Static data — connect broker for live holdings
+              </span>
+            )}
           </div>
         </div>
-        <div style={{ textAlign:'right' }}>
+        <div style={{ display:'flex', alignItems:'flex-end', flexDirection:'column', gap:4 }}>
+          <button onClick={fetchLiveHoldings} disabled={liveLoading}
+            style={{ fontSize:11, padding:'4px 12px', borderRadius:20, border:'1px solid var(--border)',
+              background:'transparent', color:'var(--text3)', cursor:'pointer' }}>
+            {liveLoading ? '⟳' : '🔄'} Refresh
+          </button>
           <div style={{ fontSize:11, color:'var(--text3)' }}>Total Invested</div>
           <div style={{ fontFamily:"'DM Mono',monospace", fontWeight:700, fontSize:18, color:'var(--text)' }}>
             {fc(summary?.invested || totalInvested)}

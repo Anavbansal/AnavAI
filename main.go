@@ -529,9 +529,63 @@ func handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 
 // ── /api/holdings ─────────────────────────────────────────────────────────────
 func handleHoldings(w http.ResponseWriter, r *http.Request) {
-	token := getToken(r)
-	if token == os.Getenv("UPSTOX_SANDBOX_ACCESS_TOKEN") {
-		writeJSON(w, 200, map[string]interface{}{"status": "success", "data": []interface{}{}})
+	brokerName := r.Header.Get("X-Broker")
+	token      := getToken(r)
+
+	// Angel One holdings — from broker package (server-side auth)
+	if brokerName == "angelone" || broker.AngelOne.IsAuthenticated() {
+		holdings, err := broker.AngelOne.GetHoldings(token)
+		if err != nil {
+			log.Printf("[holdings] Angel One error: %v", err)
+			// Fall through to Upstox
+		} else {
+			// Normalize to frontend format
+			var result []map[string]interface{}
+			totalInvested := 0.0
+			totalCurrent  := 0.0
+			totalPnL      := 0.0
+
+			for _, h := range holdings {
+				result = append(result, map[string]interface{}{
+					"symbol":       h.Symbol,
+					"name":         h.Symbol,
+					"isin":         h.ISIN,
+					"quantity":     h.Quantity,
+					"avgBuyPrice":  h.AvgBuyPrice,
+					"ltp":          h.LTP,
+					"currentValue": h.CurrentValue,
+					"investedValue":h.InvestedValue,
+					"pnl":          h.PnL,
+					"pnlPct":       h.PnLPct,
+					"exchange":     h.Exchange,
+					"product":      h.Product,
+				})
+				totalInvested += h.InvestedValue
+				totalCurrent  += h.CurrentValue
+				totalPnL      += h.PnL
+			}
+
+			writeJSON(w, 200, map[string]interface{}{
+				"status": "success",
+				"broker": "angelone",
+				"holdings": result,
+				"totalholding": map[string]interface{}{
+					"totalholdingvalue":   totalCurrent,
+					"totalprofitandloss":  totalPnL,
+					"totalinvvalue":       totalInvested,
+					"totalpnlpercentage":  func() float64 {
+						if totalInvested > 0 { return totalPnL / totalInvested * 100 }
+						return 0
+					}(),
+				},
+			})
+			return
+		}
+	}
+
+	// Upstox holdings fallback
+	if token == os.Getenv("UPSTOX_SANDBOX_ACCESS_TOKEN") || token == "" {
+		writeJSON(w, 200, map[string]interface{}{"status": "success", "broker": "none", "holdings": []interface{}{}})
 		return
 	}
 	holdings, err := fetchHoldings(token)
@@ -539,7 +593,7 @@ func handleHoldings(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]interface{}{"status": "error", "message": err.Error()})
 		return
 	}
-	writeJSON(w, 200, map[string]interface{}{"status": "success", "data": holdings})
+	writeJSON(w, 200, map[string]interface{}{"status": "success", "broker": "upstox", "holdings": holdings})
 }
 
 // ── /api/quote ────────────────────────────────────────────────────────────────
