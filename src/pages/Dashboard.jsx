@@ -75,6 +75,18 @@ function useIsMobile() {
 }
 
 export default function Dashboard() {
+  // Auth guard — redirect to login if not authenticated
+  React.useEffect(() => {
+    try {
+      const auth = JSON.parse(localStorage.getItem('anav.auth') || 'null')
+      if (!auth || Date.now() > auth.expires) {
+        localStorage.removeItem('anav.auth')
+        window.location.href = '/login'
+      }
+    } catch {
+      window.location.href = '/login'
+    }
+  }, [])
   const [tab,    setTab]    = useState('overview')
   const [sym,    setSym]    = useState('NIFTY')
   const [curSym, setCurSym] = useState('NIFTY')
