@@ -1,6 +1,7 @@
 package main
 
 import (
+	"anavai/broker"
 	"encoding/json"
 	"io"
 	"log"
@@ -46,6 +47,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	type searchFn func(string, string) []SearchResult
 	searches := []searchFn{
 		searchUpstox,
+		searchAngelOne,
 		searchLocal,
 	}
 
@@ -220,6 +222,89 @@ func searchLocal(q, _ string) []SearchResult {
 		if len(results) >= 10 {
 			break
 		}
+	}
+	return results
+}
+
+
+// ── Angel One Live Search ─────────────────────────────────────────────────────
+// Uses Angel One /searchScrip API
+// Returns all NSE/BSE/MCX listed instruments
+// Works when Angel One credentials are set in env vars
+
+func searchAngelOne(q, _ string) []SearchResult {
+	if !broker.AngelOne.IsAuthenticated() {
+		return nil
+	}
+
+	apiURL := "https://apiconnect.angelbroking.com/rest/secure/angelbroking/order/v1/searchScrip" +
+		"?exchange=NSE&searchscrip=" + url.QueryEscape(q)
+
+	req, _ := http.NewRequest("GET", apiURL, nil)
+	req.Header.Set("Authorization", "Bearer "+broker.AngelOne.GetToken())
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-PrivateKey", os.Getenv("ANGELONE_API_KEY"))
+	req.Header.Set("X-UserType", "USER")
+	req.Header.Set("X-SourceID", "WEB")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	var data map[string]interface{}
+	if err := json.Unmarshal(body, &data); err != nil {
+		return nil
+	}
+
+	rawData, ok := data["data"].([]interface{})
+	if !ok {
+		return nil
+	}
+
+	var results []SearchResult
+	for _, item := range rawData {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		toS := func(key string) string {
+			if v, ok := m[key].(string); ok { return v }
+			return ""
+		}
+
+		sym     := toS("tradingsymbol")
+		name    := toS("name")
+		exch    := toS("exch_seg")
+		token   := toS("symboltoken")
+		instType := toS("instrumenttype")
+		if sym == "" { continue }
+
+		// Normalize exchange
+		exchange := "NSE"
+		seg := "EQ"
+		if strings.HasPrefix(exch, "BSE") { exchange = "BSE" }
+		if strings.HasPrefix(exch, "MCX") { exchange = "MCX"; seg = "COMM" }
+		if instType == "OPTIDX" || instType == "OPTSTK" { seg = "FO" }
+		if instType == "FUTIDX" || instType == "FUTSTK" { seg = "FO" }
+		if instType == "AMXIDX" || strings.Contains(sym, "NIFTY") { seg = "INDEX" }
+
+		// Angel One instrument key format: "NSE:symboltoken"
+		instrKey := exchange + ":" + token
+
+		results = append(results, SearchResult{
+			Symbol:        sym,
+			Name:          name,
+			Exchange:      exchange,
+			Segment:       seg,
+			InstrumentKey: instrKey,
+			Source:        "angelone",
+		})
+		if len(results) >= 10 { break }
 	}
 	return results
 }
