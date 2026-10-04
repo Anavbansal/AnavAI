@@ -30,6 +30,12 @@ function smartSearch(query) {
 const SEG_COLOR = {
   'INDEX': { bg:'#5865f220', color:'#7c8af7', label:'INDEX' },
   'EQ':    { bg:'#22c55e15', color:'#22c55e', label:'EQ' },
+  'FO':    { bg:'#f59e0b15', color:'#f59e0b', label:'F&O' },
+  'COMM':  { bg:'#f97316_15', color:'#f97316', label:'COMM' },
+  'BE':    { bg:'#22c55e15', color:'#22c55e', label:'BE' },
+  'BL':    { bg:'#22c55e15', color:'#22c55e', label:'EQ' },
+  'SM':    { bg:'#a78bfa15', color:'#a78bfa', label:'SME' },
+  'ST':    { bg:'#a78bfa15', color:'#a78bfa', label:'SME' },
 }
 
 export default function SearchBar({ onAnalyze, loading }) {
@@ -57,12 +63,14 @@ export default function SearchBar({ onAnalyze, loading }) {
         )
         const data = await r.json()
         const serverResults = (data.results || []).map(item => ({
-          s: item.tradingSymbol || item.symbol || '',
-          n: item.name || item.shortName || '',
+          s: item.symbol || item.tradingSymbol || '',
+          n: item.shortName || item.name || item.symbol || '',
           e: item.exchange || 'NSE',
-          seg: (item.segment || '').replace('NSE_','').replace('BSE_','') || 'EQ',
+          seg: (item.segment || 'EQ').replace('NSE_','').replace('BSE_',''),
           k: item.instrumentKey || '',
+          isin: item.isin || '',
           fromServer: true,
+          src: item.source || 'live',
         })).filter(x => x.s)
         // Merge: local first, then server results not in local
         const localSyms = new Set(local.map(l => l.s))

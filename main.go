@@ -348,27 +348,8 @@ func handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ── /api/search ───────────────────────────────────────────────────────────────
-func handleSearch(w http.ResponseWriter, r *http.Request) {
-	q := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("q")))
-	if q == "" { writeJSON(w, 200, map[string]interface{}{"results": []interface{}{}}); return }
+// search handled by search.go
 
-	type Result struct {
-		Symbol     string `json:"symbol"`
-		Name       string `json:"shortName"`
-		Exchange   string `json:"exchange"`
-		InstrKey   string `json:"instrumentKey"`
-	}
-
-	var results []Result
-	for sym, key := range symbolKeyMap {
-		if strings.HasPrefix(sym, q) || strings.Contains(sym, q) {
-			results = append(results, Result{Symbol: sym, Name: sym, Exchange: "NSE", InstrKey: key})
-			if len(results) >= 15 { break }
-		}
-	}
-	writeJSON(w, 200, map[string]interface{}{"results": results})
-}
 
 // ── /session ──────────────────────────────────────────────────────────────────
 func handleSession(w http.ResponseWriter, r *http.Request) {
