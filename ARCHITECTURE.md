@@ -148,6 +148,7 @@ UPSTOX_ALGO_CLIENT_ID       = 49c22c87-...
 UPSTOX_ALGO_CLIENT_SECRET   = w6pkaukt8e
 UPSTOX_ALGO_REDIRECT_URI    = https://anavai.onrender.com/auth/callback
 UPSTOX_SANDBOX_ACCESS_TOKEN = eyJ... (fallback, expires daily)
+UPSTOX_REDIRECT_URI         = https://anavai.onrender.com/auth/callback (alternate)
 ```
 
 ### Required — Server

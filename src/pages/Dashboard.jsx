@@ -188,7 +188,7 @@ export default function Dashboard() {
                 <PricePanel data={data} ai={ai} loading={loading}/>
                 {insights}
                 {news}
-                <CompanyFundamentals symbol={data?.symbol||sym} instrumentKey={ikey}/>
+                <Suspense fallback={<TabLoader/>}><CompanyFundamentals symbol={data?.symbol||sym} instrumentKey={ikey}/></Suspense>
               </>
             ) : (
               <>
@@ -200,7 +200,7 @@ export default function Dashboard() {
                   {insights}
                   {news}
                 </div>
-                <CompanyFundamentals symbol={data?.symbol||sym} instrumentKey={ikey}/>
+                <Suspense fallback={<TabLoader/>}><CompanyFundamentals symbol={data?.symbol||sym} instrumentKey={ikey}/></Suspense>
               </>
             )}
           </div>
@@ -211,7 +211,7 @@ export default function Dashboard() {
           isMobile ? (
             <div style={{display:'flex',flexDirection:'column',...G}}>
               {chart}
-              <Suspense fallback={<TabLoader/>}><Suspense fallback={<TabLoader/>}><Intraday data={data} ai={ai}/></Suspense></Suspense>
+              <Suspense fallback={<TabLoader/>}><Intraday data={data} ai={ai}/></Suspense>
               {insights}
             </div>
           ) : (
@@ -227,7 +227,7 @@ export default function Dashboard() {
           isMobile ? (
             <div style={{display:'flex',flexDirection:'column',...G}}>
               {chart}
-              <Suspense fallback={<TabLoader/>}><Suspense fallback={<TabLoader/>}><Delivery data={data} ai={ai}/></Suspense></Suspense>
+              <Suspense fallback={<TabLoader/>}><Delivery data={data} ai={ai}/></Suspense>
               {news}
             </div>
           ) : (

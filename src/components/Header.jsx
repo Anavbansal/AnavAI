@@ -1,3 +1,4 @@
+import BrokerSelector from './broker/BrokerSelector'
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { API_BASE_URL, UPSTOX_REDIRECT_URI } from '../config'
@@ -86,30 +87,8 @@ export default function Header() {
           </span>
         </div>
 
-        {/* Connect button */}
-        {tokenStatus === 'active' ? (
-          <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-            <div style={{ display:'flex', alignItems:'center', gap:6, padding:'5px 12px', borderRadius:20,
-              background:'#22c55e10', border:'1px solid #22c55e33',
-              fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:600, color:'var(--green)' }}>
-              <span style={{ width:6, height:6, borderRadius:'50%', background:'var(--green)', display:'inline-block', animation:'pulse 2s infinite' }}/>
-              Upstox Live
-            </div>
-            <button onClick={disconnect} style={{ background:'none', border:'none', cursor:'pointer', color:'var(--text3)', fontSize:13 }}>✕</button>
-          </div>
-        ) : (
-          <button onClick={connectUpstox} disabled={tokenStatus==='connecting'} style={{
-            display:'flex', alignItems:'center', gap:6, padding:'6px 14px', borderRadius:20,
-            cursor:'pointer', fontSize:12, fontWeight:600, border:'none',
-            background:tokenStatus==='connecting'?'var(--bg2)':'linear-gradient(135deg,#5865f2,#22c55e)',
-            color:tokenStatus==='connecting'?'var(--text3)':'#fff',
-            boxShadow:tokenStatus==='connecting'?'none':'0 4px 16px #5865f244',
-          }}>
-            {tokenStatus==='connecting'
-              ? <><span className="anim-spin" style={{display:'inline-block',width:12,height:12,border:'2px solid #ffffff40',borderTopColor:'#fff',borderRadius:'50%'}}/> Connecting...</>
-              : '🔗 Connect Upstox'}
-          </button>
-        )}
+        {/* Broker Selector — Upstox & Angel One */}
+        <BrokerSelector/>
 
         {/* Time — desktop only */}
         <div className="header-desktop" style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:'var(--text3)' }}>{time}</div>
