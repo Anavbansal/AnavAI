@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom'
 // Change these to your own username + password
 // Password is checked client-side (personal app — not public)
 const VALID_USER = 'anav'
-const VALID_PASS = 'AnavAI@2024'   // Change this!
+const VALID_PASS = '2210'   // Change this!
 
 export default function Login() {
   const [user, setUser] = useState('')
