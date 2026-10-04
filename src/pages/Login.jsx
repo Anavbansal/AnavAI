@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { API_BASE_URL } from '../config'
+import { angelOneLogin, isAngelConnected } from '../services/angelOneAuth'
 
 const VALID_USER = 'anav'
 const VALID_PASS = '2210'
@@ -14,6 +15,13 @@ export default function Login() {
   const [busy,   setBusy]   = useState(false)
   const [broker, setBroker] = useState(null)      // 'upstox' | 'angelone' | 'both'
   const [angelStatus, setAngelStatus] = useState('idle') // idle|connecting|done|error
+  const [angelCreds, setAngelCreds]   = useState({
+    apiKey: localStorage.getItem('anav_ao_apikey') || '',
+    clientId: 'SJES1209',
+    pin: '',
+    totpSecret: '',
+  })
+  const [angelErr,   setAngelErr]     = useState('')
   const nav = useNavigate()
 
   // ── Step 1: Login ──────────────────────────────────────────────────────────
@@ -41,36 +49,18 @@ export default function Login() {
     setBroker(choice)
     localStorage.setItem('anav_preferred_broker', choice === 'both' ? 'upstox' : choice)
 
-    if (choice === 'angelone' || choice === 'both') {
-      // Try Angel One auto-login
-      setAngelStatus('connecting')
-      try {
-        const res = await fetch(`${API_BASE_URL}/auth/angelone/login`, { method: 'POST' })
-        const data = await res.json()
-        if (data.status === 'success') {
-          localStorage.setItem('anav_angelone_connected', '1')
-          setAngelStatus('done')
-        } else {
-          setAngelStatus('error')
-        }
-      } catch {
-        setAngelStatus('error')
-      }
-    }
-
     if (choice === 'upstox') {
-      // Go to dashboard — user will connect Upstox from header
       nav('/dashboard')
       return
     }
 
-    if (choice === 'angelone') {
-      setTimeout(() => nav('/dashboard'), angelStatus === 'error' ? 0 : 1000)
+    if (choice === 'angelone' || choice === 'both') {
+      // Show Angel One credential form
+      setStep('angelone')
       return
     }
 
-    // 'both' — go to dashboard after Angel One attempt
-    setTimeout(() => nav('/dashboard'), 1200)
+    nav('/dashboard')
   }
 
   function connectUpstoxOAuth() {
@@ -79,6 +69,25 @@ export default function Login() {
     fetch(`${API_BASE_URL}/auth/url`)
       .then(r => r.json())
       .then(d => { if (d.data?.authorizationUrl) window.location.href = d.data.authorizationUrl })
+  }
+
+  async function handleAngelLogin(e) {
+    e.preventDefault()
+    if (!angelCreds.apiKey || !angelCreds.pin || !angelCreds.totpSecret) {
+      setAngelErr('Please fill all fields'); return
+    }
+    setAngelStatus('connecting'); setAngelErr('')
+    try {
+      await angelOneLogin(angelCreds)
+      // Save API key for next time (not PIN/TOTP for security)
+      localStorage.setItem('anav_ao_apikey', angelCreds.apiKey)
+      localStorage.setItem('anav_angelone_connected', '1')
+      setAngelStatus('done')
+      setTimeout(() => nav('/dashboard'), 1000)
+    } catch(err) {
+      setAngelErr(err.message || 'Login failed — check credentials')
+      setAngelStatus('error')
+    }
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -276,6 +285,85 @@ export default function Login() {
               Skip for now — connect later from dashboard
             </button>
           </div>
+        )}
+
+        {/* ── STEP 3: Angel One Credentials ── */}
+        {step === 'angelone' && (
+          <form onSubmit={handleAngelLogin} style={{
+            background:'var(--surface)', border:'1px solid var(--border)',
+            borderRadius:16, padding:'28px',
+            display:'flex', flexDirection:'column', gap:16,
+            boxShadow:'0 20px 60px #00000030',
+          }}>
+            <div>
+              <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:4 }}>
+                <span style={{ fontSize:24 }}>🟠</span>
+                <div style={{ fontFamily:"'Syne',sans-serif", fontWeight:700, fontSize:18, color:'var(--text)' }}>
+                  Angel One Login
+                </div>
+              </div>
+              <div style={{ fontSize:12, color:'var(--text3)' }}>
+                Credentials stored only in your browser — never sent to our server
+              </div>
+            </div>
+
+            {[
+              { label:'API Key', key:'apiKey', placeholder:'From smartapi.angelbroking.com', type:'text' },
+              { label:'Client ID', key:'clientId', placeholder:'e.g. SJES1209', type:'text' },
+              { label:'MPIN (4-digit)', key:'pin', placeholder:'Your Angel One MPIN', type:'password' },
+              { label:'TOTP Secret', key:'totpSecret', placeholder:'Base32 secret from Angel One app', type:'password' },
+            ].map(field => (
+              <div key={field.key}>
+                <label style={{ display:'block', fontSize:11, fontWeight:600, color:'var(--text3)',
+                  marginBottom:6, letterSpacing:.8, textTransform:'uppercase' }}>{field.label}</label>
+                <input className="input" type={field.type}
+                  value={angelCreds[field.key]}
+                  onChange={e => setAngelCreds(p => ({...p, [field.key]: e.target.value}))}
+                  placeholder={field.placeholder}
+                  style={{ height:44, fontSize:13 }}/>
+              </div>
+            ))}
+
+            {angelErr && (
+              <div style={{ padding:'10px 14px', background:'#ef444410',
+                border:'1px solid #ef444433', borderRadius:8, color:'var(--red)', fontSize:12 }}>
+                ⚠️ {angelErr}
+              </div>
+            )}
+
+            {angelStatus === 'done' && (
+              <div style={{ padding:'10px 14px', background:'#22c55e10',
+                border:'1px solid #22c55e33', borderRadius:8, color:'var(--green)', fontSize:12 }}>
+                ✅ Connected! Redirecting...
+              </div>
+            )}
+
+            <button type="submit" disabled={angelStatus === 'connecting'}
+              style={{ height:46, borderRadius:10, border:'none', cursor:'pointer',
+                background:'#F07B24', color:'#fff', fontWeight:700, fontSize:15,
+                fontFamily:"'Syne',sans-serif", opacity: angelStatus==='connecting'?.7:1 }}>
+              {angelStatus === 'connecting'
+                ? <span style={{ display:'flex',alignItems:'center',gap:8,justifyContent:'center' }}>
+                    <span className="anim-spin" style={{ display:'inline-block',width:16,height:16,
+                      border:'2px solid #ffffff40',borderTopColor:'#fff',borderRadius:'50%' }}/>
+                    Connecting to Angel One...
+                  </span>
+                : '🟠 Connect Angel One'}
+            </button>
+
+            <button type="button" onClick={() => setStep('broker')}
+              style={{ background:'none', border:'none', cursor:'pointer',
+                color:'var(--text3)', fontSize:12, textAlign:'center' }}>
+              ← Back to broker selection
+            </button>
+
+            <div style={{ fontSize:10, color:'var(--text3)', lineHeight:1.7,
+              padding:'8px 12px', background:'var(--bg2)', borderRadius:8 }}>
+              🔐 TOTP Secret: Angel One app → Profile → Settings → Enable TOTP → Copy base32 secret<br/>
+              🔑 API Key: smartapi.angelbroking.com → My Apps → Create App → Copy key<br/>
+              🔒 These are saved only in your browser's localStorage
+            </div>
+          </form>
         )}
 
         <div style={{ textAlign:'center', fontSize:11, color:'var(--text3)', lineHeight:1.8 }}>

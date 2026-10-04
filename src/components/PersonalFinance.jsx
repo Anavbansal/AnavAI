@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { API_BASE_URL } from '../config'
+import { getAngelHoldings, isAngelConnected, getAngelAuth } from '../services/angelOneAuth'
 
 const f  = (n,d=0) => Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:d,maximumFractionDigits:d})
 const fc = n => `₹${f(n)}`
@@ -478,40 +479,39 @@ export default function PersonalFinance({ onAnalyze }) {
   // Fetch live holdings from Angel One if connected
   useEffect(() => {
     async function fetchAngelHoldings() {
-      const connected = localStorage.getItem('anav_angelone_connected')
-      if (!connected) return
+      if (!isAngelConnected()) return
       try {
-        const res = await fetch(`${API_BASE_URL}/api/holdings`, {
-          headers: { 'X-Broker': 'angelone' }
-        })
-        const data = await res.json()
-        if (data.status === 'success' && data.holdings?.length > 0) {
-          // Merge live data with our static data (to get instrKey)
+        // Direct browser → Angel One API (no server needed!)
+        const data = await getAngelHoldings()
+        if (data?.holdings?.length > 0) {
           const merged = data.holdings.map(h => {
-            const local = HOLDINGS.find(l => l.symbol === h.symbol)
+            const local = HOLDINGS.find(l => l.symbol === h.tradingsymbol || l.symbol === h.symboltoken)
             return {
-              symbol: h.symbol,
-              name: h.name || local?.name || h.symbol,
-              qty: h.quantity,
-              avg: h.avgBuyPrice,
-              sector: local?.sector || 'Other',
-              cap: local?.cap || 'Unknown',
-              instrKey: local?.instrKey || `NSE_EQ|${h.symbol}`,
-              ltp: h.ltp,
-              pnl: h.pnl,
+              symbol:   h.tradingsymbol || local?.symbol || h.symboltoken,
+              name:     h.symbolname || local?.name || h.tradingsymbol,
+              qty:      parseFloat(h.quantity) || 0,
+              avg:      parseFloat(h.averageprice) || 0,
+              sector:   local?.sector || 'Other',
+              cap:      local?.cap || 'Unknown',
+              instrKey: local?.instrKey || `NSE_EQ|${h.tradingsymbol}`,
+              ltp:      parseFloat(h.ltp) || 0,
+              pnl:      parseFloat(h.profitandloss) || 0,
             }
-          })
-          setHoldings(merged)
-          // Summary from Angel One
-          if (data.totalholding) {
-            setSummary({
-              invested: data.totalholding.totalholdingvalue - data.totalholding.totalprofitandloss,
-              current: data.totalholding.totalholdingvalue,
-              pnl: data.totalholding.totalprofitandloss,
-            })
-          }
+          }).filter(h => h.qty > 0)
+          if (merged.length > 0) setHoldings(merged)
         }
-      } catch {}
+        // Total summary
+        if (data?.totalholding) {
+          const t = data.totalholding
+          setSummary({
+            invested: parseFloat(t.totalholdingvalue) - parseFloat(t.totalprofitandloss||0),
+            current:  parseFloat(t.totalholdingvalue),
+            pnl:      parseFloat(t.totalprofitandloss||0),
+          })
+        }
+      } catch(e) {
+        console.warn('[PF] Angel One holdings fetch failed:', e.message)
+      }
     }
     fetchAngelHoldings()
   }, [])
