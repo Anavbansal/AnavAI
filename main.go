@@ -59,7 +59,7 @@ func withCORS(h http.HandlerFunc) http.HandlerFunc {
 		origin := r.Header.Get("Origin")
 		if origin == "" { origin = "*" }
 		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Broker, X-Session-Token")
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Vary", "Origin")
