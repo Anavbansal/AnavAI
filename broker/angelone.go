@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"os"
@@ -472,32 +473,27 @@ func (a *AngelOneBroker) SearchSymbol(symbol string) string {
 			tradingSymbol, _ := m["tradingsymbol"].(string)
 			symbolToken, _ := m["symboltoken"].(string)
 			exch, _ := m["exch_seg"].(string)
-			// Exact NSE match
-			if strings.EqualFold(tradingSymbol, symbol) && strings.HasPrefix(exch, "NSE") && symbolToken != "" {
-				key := exch + ":" + symbolToken
+			// Exact NSE EQ match only — avoid picking NIFTY derivatives or futures
+			if strings.EqualFold(tradingSymbol, symbol) && (exch == "NSE" || exch == "NSE_EQ") && symbolToken != "" {
+				key := "NSE:" + symbolToken
 				resolvedAngelCache.Store(symbol, key)
+				log.Printf("[AngelOne] SearchSymbol: exact match %s -> %s (token=%s)", symbol, key, symbolToken)
 				return key
 			}
 		}
-		// Fallback: first result
-		if len(data) > 0 {
-			if m, ok := data[0].(map[string]interface{}); ok {
-				symbolToken, _ := m["symboltoken"].(string)
-				exch, _ := m["exch_seg"].(string)
-				if symbolToken != "" && exch != "" {
-					key := exch + ":" + symbolToken
-					resolvedAngelCache.Store(symbol, key)
-					return key
-				}
-			}
-		}
+		// No exact match — do NOT blindly use data[0] (could be a NIFTY derivative)
+		log.Printf("[AngelOne] SearchSymbol: no exact match for %s in %d results", symbol, len(data))
 	}
-	return "NSE:" + symbol
+	// Return empty string to signal failure (caller should skip Angel One LTP)
+	return ""
 }
 
 // GetLTPBySymbol fetches live price for any symbol using dynamic token resolution
 func (a *AngelOneBroker) GetLTPBySymbol(symbol string) (float64, string, error) {
 	instrKey := a.SearchSymbol(symbol)
+	if instrKey == "" {
+		return 0, "", fmt.Errorf("could not resolve Angel One instrument key for %s", symbol)
+	}
 	ltp, err := a.GetLTP(instrKey, "")
 	return ltp, instrKey, err
 }

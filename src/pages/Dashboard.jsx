@@ -180,11 +180,19 @@ export default function Dashboard() {
               <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:6,fontSize:11,color:'var(--text3)',flexShrink:0}}>
                 <span style={{fontFamily:"'DM Mono',monospace"}}>{data.symbol}</span>
                 <span style={{width:4,height:4,borderRadius:'50%',background:'var(--text3)'}}/>
-                <span style={{fontFamily:"'DM Mono',monospace",color:(wsConnected && livePriceData?.price > 0)?'var(--green)':data.quality?.source==='UPSTOX_LIVE'?'var(--green)':'var(--amber)'}}>
-                  {(wsConnected && livePriceData?.price > 0)
-                    ? `● Live ₹${livePriceData.price.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}`
-                    : data.quality?.source==='UPSTOX_LIVE'?'● Live':'● Data'}
-                </span>
+                {(() => {
+                  // Only show WS live price if it's for the CURRENT symbol (not stale from prev symbol)
+                  const wsOk = wsConnected && livePriceData?.price > 0 && data.symbol === sym
+                  const livePrice = wsOk ? livePriceData.price : (data.ltp || data.price || 0)
+                  const isLive = wsOk || data.quality?.source === 'UPSTOX_LIVE'
+                  return (
+                    <span style={{fontFamily:"'DM Mono',monospace",color:isLive?'var(--green)':'var(--amber)'}}>
+                      {livePrice > 0
+                        ? `${isLive ? '● Live' : '●'} ₹${livePrice.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}`
+                        : isLive ? '● Live' : '● Data'}
+                    </span>
+                  )
+                })()}
               </div>
             )}
           </div>
