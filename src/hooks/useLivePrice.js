@@ -70,20 +70,58 @@ function subscribe(symbol, callback) {
 }
 
 // Hook — use in any component to get live price for a symbol
+// Falls back to REST polling if WebSocket doesn't deliver within 8 seconds
 export function useLivePrice(symbol) {
   const [priceData, setPriceData] = useState(null)
   const [connected, setConnected] = useState(false)
+  const receivedRef = useRef(false)
+  const pollRef = useRef(null)
+
+  const fetchREST = useCallback(async (sym) => {
+    try {
+      const token = getToken()
+      const headers = token ? { Authorization: `Bearer ${token}` } : {}
+      const res = await fetch(`${API_BASE_URL}/api/ltp?symbol=${sym}`, { headers })
+      const d = await res.json()
+      if (d.ltp > 0) {
+        setPriceData(prev => ({
+          price: d.ltp,
+          change: prev?.change ?? 0,
+          changePct: prev?.changePct ?? 0,
+          ts: Date.now()
+        }))
+        setConnected(true)
+      }
+    } catch {}
+  }, [])
 
   useEffect(() => {
     if (!symbol) return
     const sym = symbol.toUpperCase()
+    receivedRef.current = false
+
     const cb = (msg) => {
+      receivedRef.current = true
+      clearInterval(pollRef.current)
       setPriceData({ price: msg.price, change: msg.change, changePct: msg.changePct, ts: msg.ts })
       setConnected(true)
     }
     const unsub = subscribe(sym, cb)
-    return unsub
-  }, [symbol])
+
+    // After 8s, if no WS price yet → start REST polling every 5s
+    const fallbackTimer = setTimeout(() => {
+      if (!receivedRef.current) {
+        fetchREST(sym)
+        pollRef.current = setInterval(() => fetchREST(sym), 5000)
+      }
+    }, 8000)
+
+    return () => {
+      unsub()
+      clearTimeout(fallbackTimer)
+      clearInterval(pollRef.current)
+    }
+  }, [symbol, fetchREST])
 
   return { priceData, connected }
 }

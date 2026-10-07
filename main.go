@@ -103,7 +103,8 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	// Resolve instrument key — use frontend-provided key first (most accurate)
 	instrKey := req.InstrumentKey
 	if instrKey == "" {
-		instrKey = resolveInstrumentKey(symbol)
+		// resolveWithSearch tries static map → LTP validation → Upstox search API
+		instrKey = resolveWithSearch(symbol, token)
 	}
 	// Start feed with user's live token on first analyze
 	setFeedToken(token)
@@ -293,6 +294,53 @@ func buildAnalysis(symbol, instrKey string, candles []Candle, token string) *Ana
 		CircuitLimits: circuit,
 		AI:           ai,
 	}
+}
+
+// handleLTP — fast live price lookup for any symbol
+func handleLTP(w http.ResponseWriter, r *http.Request) {
+	symbol := strings.ToUpper(r.URL.Query().Get("symbol"))
+	if symbol == "" {
+		writeJSON(w, 400, map[string]string{"error": "symbol required"})
+		return
+	}
+	token := getToken(r)
+	instrKey := resolveWithSearch(symbol, token)
+
+	// Check V3 feed cache first (zero-latency if subscribed)
+	if tick := upstoxFeed.GetTick(instrKey); tick != nil && tick.LTP > 0 {
+		writeJSON(w, 200, map[string]interface{}{
+			"symbol": symbol, "ltp": tick.LTP, "instrKey": instrKey, "source": "feed",
+		})
+		return
+	}
+
+	// Check price cache
+	if cached, ok := cache.Get("price:" + symbol); ok {
+		if m, ok := cached.(map[string]interface{}); ok {
+			if p, ok := m["price"].(float64); ok && p > 0 {
+				writeJSON(w, 200, map[string]interface{}{
+					"symbol": symbol, "ltp": p, "instrKey": instrKey, "source": "cache",
+				})
+				return
+			}
+		}
+	}
+
+	// Fetch from Upstox REST LTP
+	ltp, err := fetchLTP(instrKey, token)
+	if err != nil || ltp == 0 {
+		writeJSON(w, 200, map[string]interface{}{
+			"symbol": symbol, "ltp": 0, "instrKey": instrKey, "error": "price unavailable",
+		})
+		return
+	}
+
+	// Subscribe to feed for future real-time updates
+	upstoxFeed.Subscribe([]string{instrKey})
+
+	writeJSON(w, 200, map[string]interface{}{
+		"symbol": symbol, "ltp": ltp, "instrKey": instrKey, "source": "rest",
+	})
 }
 
 // calcRiskProfile computes dynamic risk level from technical indicators
@@ -817,6 +865,8 @@ func main() {
 		"/api/analyze-text": handleAnalyzeText,
 		// IPO data proxy (NSE → backend → frontend, avoids CORS)
 		"/api/ipo": handleIPO,
+		// Fast LTP endpoint — resolves instrument key and returns live price
+		"/api/ltp": handleLTP,
 		// Order management (Angel One)
 		"/api/order/place":   handlePlaceOrder,
 		"/api/order/modify":  handleModifyOrder,

@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -246,35 +248,86 @@ func fetchLTP(instrumentKey, token string) (float64, error) {
 	return 0, fmt.Errorf("last_price not found")
 }
 
+// resolvedKeyCache — cache dynamically resolved keys so we don't hammer the API
+var resolvedKeyCache sync.Map // symbol -> instrKey string
+
 func resolveInstrumentKey(symbol string) string {
+	// 1. Static map (fastest)
 	if k, ok := symbolKeyMap[symbol]; ok {
 		return k
 	}
-	// Try common formats — Upstox uses ISIN-based keys
-	// NSE_EQ|SYMBOL format works for most listed stocks
+	// 2. Dynamic cache (previously resolved)
+	if v, ok := resolvedKeyCache.Load(symbol); ok {
+		return v.(string)
+	}
+	// 3. Default fallback — NSE_EQ|SYMBOL works for most listed NSE stocks
 	return "NSE_EQ|" + symbol
 }
 
-// resolveWithSearch tries to find instrument key via Upstox search API
+// resolveWithSearch finds the correct instrument key via Upstox search API,
+// caches the result, and falls back gracefully.
 func resolveWithSearch(symbol, token string) string {
-	// First check static map
+	// 1. Static map
 	if k, ok := symbolKeyMap[symbol]; ok {
 		return k
 	}
-	if token == "" {
-		return "NSE_EQ|" + symbol
+	// 2. Dynamic cache
+	if v, ok := resolvedKeyCache.Load(symbol); ok {
+		return v.(string)
 	}
-	// Try Upstox search API
+
+	fallback := "NSE_EQ|" + symbol
+
+	if token == "" {
+		return fallback
+	}
+
+	// 3. Try NSE_EQ|SYMBOL directly via LTP — if it returns data, the key works
 	data, err := upstoxGet("/v2/market-quote/ltp", token, map[string]string{
-		"instrument_key": "NSE_EQ|" + symbol,
+		"instrument_key": fallback,
 	})
 	if err == nil {
 		if d, ok := data["data"].(map[string]interface{}); ok && len(d) > 0 {
-			return "NSE_EQ|" + symbol // Works!
+			resolvedKeyCache.Store(symbol, fallback)
+			return fallback
 		}
 	}
-	// Try BSE fallback
-	return "NSE_EQ|" + symbol
+
+	// 4. Try Upstox instruments search API
+	searchData, err2 := upstoxGet("/v2/market-quote/search", token, map[string]string{
+		"search_str": symbol,
+	})
+	if err2 == nil {
+		if items, ok := searchData["data"].([]interface{}); ok {
+			for _, item := range items {
+				m, ok := item.(map[string]interface{})
+				if !ok { continue }
+				tradingSymbol, _ := m["trading_symbol"].(string)
+				instrKey, _ := m["instrument_key"].(string)
+				exchange, _ := m["exchange"].(string)
+				// Prefer exact NSE match
+				if strings.EqualFold(tradingSymbol, symbol) && strings.HasPrefix(exchange, "NSE") && instrKey != "" {
+					resolvedKeyCache.Store(symbol, instrKey)
+					log.Printf("[resolve] %s → %s (via search API)", symbol, instrKey)
+					return instrKey
+				}
+			}
+			// Second pass — any exchange
+			for _, item := range items {
+				m, ok := item.(map[string]interface{})
+				if !ok { continue }
+				tradingSymbol, _ := m["trading_symbol"].(string)
+				instrKey, _ := m["instrument_key"].(string)
+				if strings.EqualFold(tradingSymbol, symbol) && instrKey != "" {
+					resolvedKeyCache.Store(symbol, instrKey)
+					log.Printf("[resolve] %s → %s (via search API, non-NSE)", symbol, instrKey)
+					return instrKey
+				}
+			}
+		}
+	}
+
+	return fallback
 }
 
 
