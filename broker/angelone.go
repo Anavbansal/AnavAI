@@ -456,7 +456,8 @@ func (a *AngelOneBroker) SearchSymbol(symbol string) string {
 		return v.(string)
 	}
 	if err := a.ensureAuth(); err != nil {
-		return "NSE:" + symbol
+		log.Printf("[AngelOne] SearchSymbol: auth failed for %s: %v", symbol, err)
+		return ""
 	}
 	// 3. Angel One searchscrip API
 	resp, err := a.post("/rest/secure/angelbroking/order/v1/searchScrip", map[string]interface{}{
@@ -464,8 +465,10 @@ func (a *AngelOneBroker) SearchSymbol(symbol string) string {
 		"searchscrip": symbol,
 	}, "")
 	if err != nil {
-		return "NSE:" + symbol
+		log.Printf("[AngelOne] SearchSymbol: search API error for %s: %v", symbol, err)
+		return ""
 	}
+	log.Printf("[AngelOne] SearchSymbol: raw response for %s: %+v", symbol, resp)
 	if data, ok := resp["data"].([]interface{}); ok {
 		for _, item := range data {
 			m, ok := item.(map[string]interface{})
@@ -474,7 +477,8 @@ func (a *AngelOneBroker) SearchSymbol(symbol string) string {
 			symbolToken, _ := m["symboltoken"].(string)
 			exch, _ := m["exch_seg"].(string)
 			// Exact NSE EQ match only — avoid picking NIFTY derivatives or futures
-			if strings.EqualFold(tradingSymbol, symbol) && (exch == "NSE" || exch == "NSE_EQ") && symbolToken != "" {
+			exchUpper := strings.ToUpper(exch)
+			if strings.EqualFold(tradingSymbol, symbol) && (exchUpper == "NSE" || exchUpper == "NSE_EQ") && symbolToken != "" {
 				key := "NSE:" + symbolToken
 				resolvedAngelCache.Store(symbol, key)
 				log.Printf("[AngelOne] SearchSymbol: exact match %s -> %s (token=%s)", symbol, key, symbolToken)
