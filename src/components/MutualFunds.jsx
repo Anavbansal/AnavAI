@@ -5,10 +5,95 @@ const r2  = n => Math.round(n * 100) / 100
 const fc  = n => `₹${Number(n||0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}`
 const pct = (a,b) => b ? ((a-b)/b*100) : 0
 
-const MF_STORAGE_KEY = 'anavai_mf_portfolio'
+const MF_STORAGE_KEY    = 'anavai_mf_portfolio'
+const MF_SEEDED_KEY     = 'anavai_mf_seeded_v1'   // bump to re-seed
+
+// Stable key for navMap — prefer ISIN, fallback to schemeName
+const navKey = f => f.isin || f.schemeName
+
+// ── Pre-loaded funds from user's CAS PDF (Oct 2026) ──────────────────────────
+// schemeCode resolved lazily on Render via mfapi.in; left blank here so
+// the live backend resolves and caches them on first NAV fetch.
+const CAS_SEED_FUNDS = [
+  {
+    schemeCode:  '152406',
+    schemeName:  'Bajaj Finserv Large & Mid Cap Fund - Regular Plan - Growth',
+    isin:        'INF0QA701730',
+    folio:       '7773657665',
+    amc:         'Bajaj Finserv Mutual Fund',
+    units:       7323.253,
+    avgNav:      11.88,
+    costValue:   87000,
+    addedAt:     1728000000000,
+  },
+  {
+    schemeCode:  '',
+    schemeName:  'Bandhan Mid Cap Fund - Regular Plan - Growth',
+    isin:        'INF194KB1DM6',
+    folio:       '4263637',
+    amc:         'Bandhan Mutual Fund',
+    units:       3099.683,
+    avgNav:      16.454,
+    costValue:   51000,
+    addedAt:     1728000000000,
+  },
+  {
+    schemeCode:  '',
+    schemeName:  'Invesco India Financial Services Fund - Regular Plan Growth',
+    isin:        'INF205K01155',
+    folio:       '31014963355',
+    amc:         'Invesco Mutual Fund',
+    units:       1247.049,
+    avgNav:      106.25,
+    costValue:   132500,
+    addedAt:     1728000000000,
+  },
+  {
+    schemeCode:  '',
+    schemeName:  'Invesco India Small Cap Fund - Regular Plan Growth',
+    isin:        'INF205K011T7',
+    folio:       '31042334532',
+    amc:         'Invesco Mutual Fund',
+    units:       314.488,
+    avgNav:      44.52,
+    costValue:   14000,
+    addedAt:     1728000000000,
+  },
+  {
+    schemeCode:  '',
+    schemeName:  'Mahindra Manulife Flexi Cap Fund - Regular - Growth',
+    isin:        'INF174V01AP8',
+    folio:       '1000543712',
+    amc:         'Mahindra Manulife Mutual Fund',
+    units:       9979.966,
+    avgNav:      13.277,
+    costValue:   132500,
+    addedAt:     1728000000000,
+  },
+  {
+    schemeCode:  '',
+    schemeName:  'Mirae Asset Multicap Fund - Regular Plan - Growth',
+    isin:        'INF769K01KH4',
+    folio:       '77780532686',
+    amc:         'Mirae Asset Mutual Fund',
+    units:       3791.603,
+    avgNav:      14.243,
+    costValue:   54000,
+    addedAt:     1728000000000,
+  },
+]
 
 function loadPortfolio() {
-  try { return JSON.parse(localStorage.getItem(MF_STORAGE_KEY) || '[]') } catch { return [] }
+  try {
+    const existing = JSON.parse(localStorage.getItem(MF_STORAGE_KEY) || '[]')
+    // Seed once if never seeded and portfolio is empty
+    if (!localStorage.getItem(MF_SEEDED_KEY) && existing.length === 0) {
+      localStorage.setItem(MF_STORAGE_KEY, JSON.stringify(CAS_SEED_FUNDS))
+      localStorage.setItem(MF_SEEDED_KEY, '1')
+      return CAS_SEED_FUNDS
+    }
+    return existing
+  } catch { return [] }
 }
 function savePortfolio(data) {
   localStorage.setItem(MF_STORAGE_KEY, JSON.stringify(data))
@@ -374,18 +459,46 @@ export default function MutualFunds() {
   useEffect(() => {
     if (portfolio.length === 0) return
     let cancelled = false
+    async function resolveCode(fund) {
+      if (fund.schemeCode) return fund.schemeCode
+      // Try to resolve via backend search (works on Render even if not here)
+      try {
+        const q   = encodeURIComponent(fund.schemeName.split(' ').slice(0,5).join(' '))
+        const res = await fetch(`${API_BASE_URL}/api/mf/search?q=${q}`)
+        const arr = await res.json()
+        if (arr?.length > 0) {
+          const code = String(arr[0].schemeCode)
+          // Persist resolved code back to portfolio
+          setPortfolio(prev => {
+            const updated = prev.map(f =>
+              f.isin === fund.isin || f.schemeName === fund.schemeName
+                ? { ...f, schemeCode: code }
+                : f
+            )
+            savePortfolio(updated)
+            return updated
+          })
+          return code
+        }
+      } catch {}
+      return null
+    }
+
     async function fetchNavs() {
       setLoadingNav(true)
       for (const fund of portfolio) {
         if (cancelled) break
         try {
-          const res  = await fetch(`${API_BASE_URL}/api/mf/nav?code=${fund.schemeCode}`)
+          const code = await resolveCode(fund)
+          if (!code) continue
+          const res  = await fetch(`${API_BASE_URL}/api/mf/nav?code=${code}`)
           const data = await res.json()
           const latest = data?.data?.[0]
           if (latest && !cancelled) {
+            const key = fund.isin || fund.schemeName
             setNavMap(prev => ({
               ...prev,
-              [fund.schemeCode]: {
+              [key]: {
                 nav:  parseFloat(latest.nav),
                 date: latest.date,
                 meta: data.meta,
@@ -425,16 +538,16 @@ export default function MutualFunds() {
     savePortfolio(updated)
   }
 
-  function removeFund(schemeCode) {
-    const updated = portfolio.filter(f => f.schemeCode !== schemeCode)
+  function removeFund(key) {
+    const updated = portfolio.filter(f => navKey(f) !== key)
     setPortfolio(updated)
     savePortfolio(updated)
-    if (selected?.schemeCode === schemeCode) setSelected(null)
+    if (selected && navKey(selected) === key) setSelected(null)
   }
 
   // Portfolio totals
   const totals = portfolio.reduce((acc, f) => {
-    const liveNav  = navMap[f.schemeCode]?.nav || 0
+    const liveNav  = navMap[navKey(f)]?.nav || 0
     const invested = f.units * f.avgNav
     const current  = liveNav > 0 ? f.units * liveNav : invested
     return { invested: acc.invested+invested, current: acc.current+current }
@@ -555,7 +668,7 @@ export default function MutualFunds() {
               <span/>
             </div>
             {portfolio.map((fund, idx) => {
-              const nav      = navMap[fund.schemeCode]
+              const nav      = navMap[navKey(fund)]
               const liveNav  = nav?.nav || 0
               const invested = fund.units * fund.avgNav
               const current  = liveNav > 0 ? fund.units * liveNav : 0
@@ -563,12 +676,12 @@ export default function MutualFunds() {
               const pnlPct   = pnlAmt !== 0 ? pnlAmt/invested*100 : 0
               const bull     = pnlAmt >= 0
               return (
-                <div key={fund.schemeCode}
+                <div key={navKey(fund)}
                   style={{display:'grid',gridTemplateColumns:'2.5fr 0.8fr 1fr 1fr 1.2fr 1.2fr 0.5fr',
                     padding:'10px 16px',borderBottom:'1px solid var(--border)',
                     background: idx%2===0?'transparent':'rgba(255,255,255,0.015)',
                     cursor:'pointer',transition:'background .15s'}}
-                  onClick={()=>setSelected(selected?.schemeCode===fund.schemeCode?null:fund)}
+                  onClick={()=>setSelected(selected && navKey(selected)===navKey(fund)?null:fund)}
                   onMouseEnter={e=>e.currentTarget.style.background='rgba(99,102,241,0.06)'}
                   onMouseLeave={e=>e.currentTarget.style.background=idx%2===0?'transparent':'rgba(255,255,255,0.015)'}>
                   <div>
@@ -597,7 +710,7 @@ export default function MutualFunds() {
                     </>):<span style={{fontSize:11,color:'var(--text3)'}}>—</span>}
                   </div>
                   <div style={{textAlign:'right',alignSelf:'center'}}>
-                    <button onClick={e=>{e.stopPropagation();removeFund(fund.schemeCode)}}
+                    <button onClick={e=>{e.stopPropagation();removeFund(navKey(fund))}}
                       style={{background:'transparent',border:'none',color:'#ef444488',cursor:'pointer',fontSize:14,padding:2}}>
                       ×
                     </button>
@@ -644,15 +757,15 @@ export default function MutualFunds() {
         )}
 
         {/* Expanded fund detail with NAV chart */}
-        {selected && navMap[selected.schemeCode]?.history?.length > 0 && (
+        {selected && navMap[navKey(selected)]?.history?.length > 0 && (
           <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:12,padding:16}}>
             <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,color:'var(--text)',marginBottom:4}}>
               {selected.schemeName}
             </div>
             <div style={{fontSize:10,color:'var(--text3)',marginBottom:12}}>
-              {navMap[selected.schemeCode]?.meta?.fund_house} · {navMap[selected.schemeCode]?.meta?.scheme_category}
+              {navMap[navKey(selected)]?.meta?.fund_house} · {navMap[navKey(selected)]?.meta?.scheme_category}
             </div>
-            <SimpleChart data={navMap[selected.schemeCode].history}/>
+            <SimpleChart data={navMap[navKey(selected)].history}/>
           </div>
         )}
       </>)}
