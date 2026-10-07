@@ -446,6 +446,7 @@ export default function MutualFunds() {
   const [showAdd,    setShowAdd]    = useState(false)
   const [showCAS,    setShowCAS]    = useState(false)
   const [selected,   setSelected]   = useState(null) // for detail view
+  const [aiAnalysis, setAiAnalysis] = useState({})   // navKey → {loading, data}
 
   // Search tab state
   const [query,      setQuery]      = useState('')
@@ -554,6 +555,60 @@ export default function MutualFunds() {
   }, { invested:0, current:0 })
   const totalPnl    = totals.current - totals.invested
   const totalPnlPct = totals.invested > 0 ? totalPnl/totals.invested*100 : 0
+
+  // AI Analysis for a selected fund
+  const fetchMFAnalysis = useCallback(async (fund, cagr1, cagr3, cagr5, pnlPct) => {
+    const key = navKey(fund)
+    if (aiAnalysis[key]?.data || aiAnalysis[key]?.loading) return
+    setAiAnalysis(prev => ({ ...prev, [key]: { loading: true } }))
+    try {
+      const prompt = `You are an expert Indian mutual fund advisor. Analyze this fund and give a concise recommendation.
+
+Fund: ${fund.schemeName}
+Category: ${navMap[key]?.meta?.scheme_category || 'Unknown'}
+1Y CAGR: ${cagr1 != null ? cagr1.toFixed(2)+'%' : 'N/A'}
+3Y CAGR: ${cagr3 != null ? cagr3.toFixed(2)+'%' : 'N/A'}
+5Y CAGR: ${cagr5 != null ? cagr5.toFixed(2)+'%' : 'N/A'}
+User P&L: ${pnlPct != null ? pnlPct.toFixed(2)+'%' : 'N/A'}
+
+Respond in JSON only (no markdown):
+{
+  "verdict": "HOLD" | "BUY MORE" | "REVIEW" | "EXIT",
+  "holdFor": "e.g. 2-3 more years",
+  "riskLevel": "Low" | "Moderate" | "High",
+  "summary": "2-3 lines in Hinglish — simple language, practical advice",
+  "pros": ["point1","point2"],
+  "cons": ["point1","point2"]
+}`
+      const res = await fetch(`${API_BASE_URL}/api/analyze-text`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt })
+      })
+      if (!res.ok) throw new Error('API error')
+      const raw = await res.text()
+      // Extract JSON from response
+      const match = raw.match(/\{[\s\S]*\}/)
+      const parsed = match ? JSON.parse(match[0]) : null
+      setAiAnalysis(prev => ({ ...prev, [key]: { loading: false, data: parsed } }))
+    } catch {
+      // Fallback local analysis
+      const verdict = (cagr1||0) > 12 ? 'HOLD' : (cagr1||0) > 6 ? 'REVIEW' : 'EXIT'
+      const holdFor = (cagr5||0) > 12 ? '2-3 more years' : '1 year reassess karo'
+      setAiAnalysis(prev => ({ ...prev, [key]: {
+        loading: false,
+        data: {
+          verdict,
+          holdFor,
+          riskLevel: (fund.schemeName||'').toLowerCase().includes('small') ? 'High' :
+                     (fund.schemeName||'').toLowerCase().includes('mid')   ? 'Moderate' : 'Low',
+          summary: `Is fund ka 1Y return ${cagr1!=null?cagr1.toFixed(1)+'%':'N/A'} hai. ${verdict==='HOLD'?'Performance theek hai, hold karo.':verdict==='REVIEW'?'Performance average hai, review karo.':'Performance weak hai, exit consider karo.'}`,
+          pros: cagr1 > 10 ? ['Good recent returns','Market se better performance'] : ['Diversification'],
+          cons: cagr1 < 8  ? ['Below average returns','Better alternatives available'] : ['Market risk']
+        }
+      }}))
+    }
+  }, [aiAnalysis, navMap])
 
   // Search tab
   const search = useCallback(async () => {
@@ -756,18 +811,129 @@ export default function MutualFunds() {
           </div>
         )}
 
-        {/* Expanded fund detail with NAV chart */}
-        {selected && navMap[navKey(selected)]?.history?.length > 0 && (
-          <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:12,padding:16}}>
-            <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,color:'var(--text)',marginBottom:4}}>
-              {selected.schemeName}
+        {/* Expanded fund detail with NAV chart + AI Analysis */}
+        {selected && (() => {
+          const key = navKey(selected)
+          const nav = navMap[key]
+          const hist = nav?.history || []
+          const liveNav  = nav?.nav || 0
+          const invested = selected.units * selected.avgNav
+          const current  = liveNav > 0 ? selected.units * liveNav : invested
+          const pnlPct   = invested > 0 ? (current - invested)/invested*100 : 0
+          function histCagr(years) {
+            if (hist.length < 2) return null
+            const idx = Math.max(0, hist.length - Math.round(years*365))
+            const s = hist[idx]?.nav; const e = hist[hist.length-1]?.nav
+            if (!s||!e) return null
+            return (Math.pow(e/s, 1/years)-1)*100
+          }
+          const c1=histCagr(1), c3=histCagr(3), c5=histCagr(5)
+          const ai = aiAnalysis[key]
+          if (!ai && hist.length > 0) fetchMFAnalysis(selected, c1, c3, c5, pnlPct)
+          const verdictColor = {
+            'HOLD':'#22c55e','BUY MORE':'#6366f1','REVIEW':'#f59e0b','EXIT':'#ef4444'
+          }[ai?.data?.verdict] || 'var(--text3)'
+          const riskColor = {'Low':'#22c55e','Moderate':'#f59e0b','High':'#ef4444'}[ai?.data?.riskLevel]||'var(--text3)'
+          return (
+            <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:12,padding:16,display:'flex',flexDirection:'column',gap:14}}>
+              {/* Fund title */}
+              <div>
+                <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,color:'var(--text)',marginBottom:3}}>
+                  {selected.schemeName}
+                </div>
+                <div style={{fontSize:10,color:'var(--text3)'}}>
+                  {nav?.meta?.fund_house} · {nav?.meta?.scheme_category}
+                </div>
+              </div>
+
+              {/* CAGR stats */}
+              {hist.length > 0 && (
+                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
+                  {[
+                    {l:'1Y CAGR', v:c1!=null?`${c1.toFixed(1)}%`:'N/A', c:(c1||0)>0?'#22c55e':'#ef4444'},
+                    {l:'3Y CAGR', v:c3!=null?`${c3.toFixed(1)}%`:'N/A', c:(c3||0)>0?'#22c55e':'#ef4444'},
+                    {l:'5Y CAGR', v:c5!=null?`${c5.toFixed(1)}%`:'N/A', c:(c5||0)>0?'#22c55e':'#ef4444'},
+                    {l:'Your P&L', v:`${pnlPct>=0?'+':''}${pnlPct.toFixed(1)}%`, c:pnlPct>=0?'#22c55e':'#ef4444'},
+                  ].map(m=>(
+                    <div key={m.l} style={{textAlign:'center',padding:'8px 6px',background:'var(--bg2)',borderRadius:8,border:'1px solid var(--border)'}}>
+                      <div style={{fontSize:9,color:'var(--text3)',letterSpacing:.7,marginBottom:3}}>{m.l}</div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:13,color:m.c}}>{m.v}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* NAV Chart */}
+              {hist.length > 0 && <SimpleChart data={hist}/>}
+
+              {/* AI Analysis */}
+              <div style={{borderTop:'1px solid var(--border)',paddingTop:12}}>
+                <div style={{fontSize:10,fontWeight:700,color:'var(--text3)',letterSpacing:.8,marginBottom:10}}>🤖 AI ANALYSIS</div>
+                {ai?.loading && (
+                  <div style={{display:'flex',alignItems:'center',gap:10,padding:'14px 0'}}>
+                    <div style={{width:16,height:16,borderRadius:'50%',border:'2px solid var(--border)',
+                      borderTopColor:'var(--accent)',animation:'spin 1s linear infinite'}}/>
+                    <span style={{fontSize:12,color:'var(--text3)'}}>Fund analyze ho raha hai...</span>
+                  </div>
+                )}
+                {ai?.data && (
+                  <div style={{display:'flex',flexDirection:'column',gap:10}}>
+                    {/* Verdict + Risk + Hold */}
+                    <div style={{display:'grid',gridTemplateColumns:'auto auto 1fr',gap:10,alignItems:'center'}}>
+                      <div style={{padding:'6px 14px',borderRadius:20,border:`2px solid ${verdictColor}`,
+                        color:verdictColor,fontWeight:800,fontSize:13,letterSpacing:.5}}>
+                        {ai.data.verdict}
+                      </div>
+                      <div style={{padding:'4px 10px',borderRadius:12,background:'var(--bg2)',
+                        border:'1px solid var(--border)',fontSize:11,color:riskColor,fontWeight:600}}>
+                        ⚠️ {ai.data.riskLevel} Risk
+                      </div>
+                      {ai.data.holdFor && (
+                        <div style={{fontSize:11,color:'var(--text3)'}}>
+                          🕐 Hold: <span style={{color:'var(--text)',fontWeight:600}}>{ai.data.holdFor}</span>
+                        </div>
+                      )}
+                    </div>
+                    {/* Summary */}
+                    {ai.data.summary && (
+                      <div style={{fontSize:12,color:'var(--text2)',lineHeight:1.6,padding:'10px 12px',
+                        background:'var(--bg2)',borderRadius:8,borderLeft:'3px solid var(--accent)'}}>
+                        {ai.data.summary}
+                      </div>
+                    )}
+                    {/* Pros & Cons */}
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+                      {ai.data.pros?.length > 0 && (
+                        <div style={{padding:'10px 12px',background:'rgba(34,197,94,0.06)',
+                          border:'1px solid rgba(34,197,94,0.2)',borderRadius:8}}>
+                          <div style={{fontSize:9,fontWeight:700,color:'#22c55e',letterSpacing:.7,marginBottom:6}}>✅ PROS</div>
+                          {ai.data.pros.map((p,i)=>(
+                            <div key={i} style={{fontSize:11,color:'var(--text2)',marginBottom:3,lineHeight:1.4}}>• {p}</div>
+                          ))}
+                        </div>
+                      )}
+                      {ai.data.cons?.length > 0 && (
+                        <div style={{padding:'10px 12px',background:'rgba(239,68,68,0.06)',
+                          border:'1px solid rgba(239,68,68,0.2)',borderRadius:8}}>
+                          <div style={{fontSize:9,fontWeight:700,color:'#ef4444',letterSpacing:.7,marginBottom:6}}>⚠️ CONS</div>
+                          {ai.data.cons.map((c,i)=>(
+                            <div key={i} style={{fontSize:11,color:'var(--text2)',marginBottom:3,lineHeight:1.4}}>• {c}</div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {/* Refresh button */}
+                    <button onClick={()=>{setAiAnalysis(p=>({...p,[key]:undefined}))}}
+                      style={{alignSelf:'flex-end',padding:'4px 12px',borderRadius:6,border:'1px solid var(--border)',
+                        background:'transparent',color:'var(--text3)',cursor:'pointer',fontSize:11}}>
+                      🔄 Re-analyze
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
-            <div style={{fontSize:10,color:'var(--text3)',marginBottom:12}}>
-              {navMap[navKey(selected)]?.meta?.fund_house} · {navMap[navKey(selected)]?.meta?.scheme_category}
-            </div>
-            <SimpleChart data={navMap[navKey(selected)].history}/>
-          </div>
-        )}
+          )
+        })()}
       </>)}
 
       {/* ── SEARCH TAB ── */}

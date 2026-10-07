@@ -155,3 +155,29 @@ Never give generic advice — be specific to the stock and data provided.` + sto
 		"data":   map[string]string{"reply": reply},
 	})
 }
+
+// handleAnalyzeText — POST /api/analyze-text
+// Generic text prompt → Groq response (used by MF AI analysis)
+func handleAnalyzeText(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeJSON(w, 405, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req struct {
+		Prompt string `json:"prompt"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Prompt == "" {
+		writeJSON(w, 400, map[string]string{"error": "prompt required"})
+		return
+	}
+
+	reply, err := callGroq("You are a JSON-only response bot. Respond with valid JSON and nothing else.", req.Prompt)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	// Return raw text so frontend can parse JSON
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(200)
+	w.Write([]byte(reply))
+}

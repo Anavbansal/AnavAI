@@ -783,6 +783,8 @@ func main() {
 		"/api/mf/search":     handleMFSearch,
 		"/api/mf/parse-cas":  handleCASParse,
 		"/api/mf/parse-text": handleCASText,
+		// Generic AI text analysis
+		"/api/analyze-text": handleAnalyzeText,
 		// Order management (Angel One)
 		"/api/order/place":   handlePlaceOrder,
 		"/api/order/modify":  handleModifyOrder,
