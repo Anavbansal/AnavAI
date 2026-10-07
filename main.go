@@ -690,6 +690,53 @@ func candlesToArray(candles []Candle) [][]interface{} {
 	return result
 }
 
+// ── MF NAV proxy (mfapi.in) ───────────────────────────────────────────────────
+func handleMFNav(w http.ResponseWriter, r *http.Request) {
+	schemeCode := r.URL.Query().Get("code")
+	if schemeCode == "" {
+		writeJSON(w, 400, map[string]string{"error": "code required"})
+		return
+	}
+	cacheKey := "mfnav:" + schemeCode
+	if cached, ok := cache.Get(cacheKey); ok {
+		writeJSON(w, 200, cached)
+		return
+	}
+	resp, err := http.Get("https://api.mfapi.in/mf/" + schemeCode)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	var data interface{}
+	json.NewDecoder(resp.Body).Decode(&data)
+	cache.Set(cacheKey, data, 4*time.Hour)
+	writeJSON(w, 200, data)
+}
+
+func handleMFSearch(w http.ResponseWriter, r *http.Request) {
+	q := strings.ToLower(r.URL.Query().Get("q"))
+	if q == "" {
+		writeJSON(w, 400, map[string]string{"error": "q required"})
+		return
+	}
+	cacheKey := "mfsearch:" + q
+	if cached, ok := cache.Get(cacheKey); ok {
+		writeJSON(w, 200, cached)
+		return
+	}
+	resp, err := http.Get("https://api.mfapi.in/mf/search?q=" + url.QueryEscape(q))
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	var data interface{}
+	json.NewDecoder(resp.Body).Decode(&data)
+	cache.Set(cacheKey, data, 24*time.Hour)
+	writeJSON(w, 200, data)
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 func main() {
 	port := os.Getenv("PORT")
@@ -721,6 +768,8 @@ func main() {
 		"/auth/exchange":     handleAuthExchange,
 		"/api/holdings":      handleHoldings,
 		"/api/quote":         handleQuote,
+		"/api/mf/nav":        handleMFNav,
+		"/api/mf/search":     handleMFSearch,
 	}
 
 	for path, handler := range routes {
