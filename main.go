@@ -772,6 +772,16 @@ func main() {
 		"/api/mf/search":     handleMFSearch,
 		"/api/mf/parse-cas":  handleCASParse,
 		"/api/mf/parse-text": handleCASText,
+		// Order management (Angel One)
+		"/api/order/place":   handlePlaceOrder,
+		"/api/order/modify":  handleModifyOrder,
+		"/api/order/cancel":  handleCancelOrder,
+		"/api/orders":        handleGetOrders,
+		"/api/positions":     handleGetPositions,
+		"/api/funds":         handleGetFunds,
+		"/api/gtt/place":     handlePlaceGTT,
+		"/api/gtt/cancel":    handleCancelGTT,
+		"/api/gtt/list":      handleGetGTTs,
 	}
 
 	for path, handler := range routes {

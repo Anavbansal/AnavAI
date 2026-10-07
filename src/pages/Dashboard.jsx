@@ -21,6 +21,7 @@ const PriceAlerts        = lazy(() => import('../components/PriceAlerts'))
 const EconomicCalendar   = lazy(() => import('../components/EconomicCalendar'))
 const PersonalFinance    = lazy(() => import('../components/PersonalFinance'))
 const IPOTracker         = lazy(() => import('../components/IPOTracker'))
+const OrderPanel         = lazy(() => import('../components/OrderPanel'))
 
 // Suspense fallback
 function TabLoader() {
@@ -60,7 +61,7 @@ const ALL_TABS = [
   {id:'ipo',       label:'IPO',         icon:'🚀'},
 ]
 
-const NO_REFETCH = new Set(['portfolio','mf','scanner','alerts','calendar','risk','pf','ipo'])
+const NO_REFETCH = new Set(['portfolio','mf','scanner','alerts','calendar','risk','pf','ipo','orders'])
 const MODE = {overview:'tech',intraday:'intraday',delivery:'delivery',fo:'fo'}
 
 // Hook: detect mobile
@@ -97,6 +98,17 @@ export default function Dashboard() {
   const { priceData: livePriceData, connected: wsConnected } = useLivePrice(sym)
   const isMobile = useIsMobile()
   const [moreOpen, setMoreOpen] = useState(false)
+  // Order panel state
+  const [orderOpen, setOrderOpen]   = useState(false)
+  const [orderSym,  setOrderSym]    = useState('')
+  const [orderToken,setOrderToken]  = useState('')
+  const [orderExch, setOrderExch]   = useState('NSE')
+  const [orderLTP,  setOrderLTP]    = useState(0)
+  const [orderTab,  setOrderTab]    = useState('Order')
+  const openOrder = useCallback((sym, token, exch, ltp, tab='Order') => {
+    setOrderSym(sym); setOrderToken(token); setOrderExch(exch||'NSE')
+    setOrderLTP(ltp||0); setOrderTab(tab); setOrderOpen(true)
+  }, [])
 
   // Read Upstox token from URL after OAuth redirect
   useEffect(() => {
@@ -193,6 +205,36 @@ export default function Dashboard() {
         {/* ── OVERVIEW ── */}
         {tab==='overview' && !loading && (
           <div style={{display:'flex',flexDirection:'column',...G}}>
+            {/* Buy / Sell quick buttons */}
+            {data?.symbol && (
+              <div style={{display:'flex',gap:8}}>
+                <button onClick={() => openOrder(data.symbol, data.symbolToken||'', data.exchange||'NSE', data.ltp||data.close||0, 'Order')}
+                  style={{flex:1,padding:'9px 0',borderRadius:8,border:'none',cursor:'pointer',
+                    background:'#22c55e',color:'#fff',fontWeight:700,fontSize:14,
+                    fontFamily:"'Syne',sans-serif",letterSpacing:.5}}>
+                  ▲ BUY
+                </button>
+                <button onClick={() => openOrder(data.symbol, data.symbolToken||'', data.exchange||'NSE', data.ltp||data.close||0, 'Order')}
+                  style={{flex:1,padding:'9px 0',borderRadius:8,border:'none',cursor:'pointer',
+                    background:'#ef4444',color:'#fff',fontWeight:700,fontSize:14,
+                    fontFamily:"'Syne',sans-serif",letterSpacing:.5}}>
+                  ▼ SELL
+                </button>
+                <button onClick={() => openOrder(data.symbol, data.symbolToken||'', data.exchange||'NSE', data.ltp||data.close||0, 'Orders')}
+                  style={{padding:'9px 14px',borderRadius:8,border:'1px solid var(--border)',cursor:'pointer',
+                    background:'var(--surface)',color:'var(--text2)',fontWeight:600,fontSize:13,
+                    fontFamily:"'DM Sans',sans-serif"}}>
+                  📋 Orders
+                </button>
+                <button onClick={() => openOrder(data.symbol, data.symbolToken||'', data.exchange||'NSE', data.ltp||data.close||0, 'GTT')}
+                  style={{padding:'9px 14px',borderRadius:8,border:'1px solid #f59e0b33',cursor:'pointer',
+                    background:'#f59e0b10',color:'#f59e0b',fontWeight:600,fontSize:13,
+                    fontFamily:"'DM Sans',sans-serif"}}>
+                  🎯 GTT
+                </button>
+              </div>
+            )}
+
             {/* Mobile: chart full width first, then price panel */}
             {isMobile ? (
               <>
@@ -270,6 +312,20 @@ export default function Dashboard() {
         {tab==='pf'        && <Suspense fallback={<TabLoader/>}><PersonalFinance/></Suspense>}
         {tab==='mf'       && <Suspense fallback={<TabLoader/>}><MutualFunds/></Suspense>}
         {tab==='ipo'      && <Suspense fallback={<TabLoader/>}><IPOTracker/></Suspense>}
+
+        {/* ── Order Panel — slide-in from right ── */}
+        {orderOpen && (
+          <Suspense fallback={null}>
+            <OrderPanel
+              symbol={orderSym}
+              symbolToken={orderToken}
+              exchange={orderExch}
+              ltp={orderLTP}
+              defaultTab={orderTab}
+              onClose={() => setOrderOpen(false)}
+            />
+          </Suspense>
+        )}
 
       </main>
 

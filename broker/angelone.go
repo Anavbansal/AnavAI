@@ -620,3 +620,375 @@ func (a *AngelOneBroker) StartAutoRefresh() {
 
 // Ensure math import used
 var _ = math.Round
+
+// ── Order Management ──────────────────────────────────────────────────────────
+
+// PlaceOrder places a new order on Angel One
+// Docs: https://smartapi.angelbroking.com/docs#placeOrder
+func (a *AngelOneBroker) PlaceOrder(req PlaceOrderReq) (*OrderResp, error) {
+	if err := a.ensureAuth(); err != nil {
+		return nil, err
+	}
+
+	variety := req.Variety
+	if variety == "" {
+		if req.OrderType == OrderSL || req.OrderType == OrderSLM {
+			variety = "STOPLOSS"
+		} else {
+			variety = "NORMAL"
+		}
+	}
+
+	payload := map[string]interface{}{
+		"variety":         variety,
+		"tradingsymbol":   req.Symbol,
+		"symboltoken":     req.SymbolToken,
+		"transactiontype": string(req.TransactionType),
+		"exchange":        req.Exchange,
+		"ordertype":       string(req.OrderType),
+		"producttype":     string(req.Product),
+		"duration":        func() string { if req.Validity == "" { return "DAY" }; return req.Validity }(),
+		"price":           fmt.Sprintf("%.2f", req.Price),
+		"triggerprice":    fmt.Sprintf("%.2f", req.TriggerPrice),
+		"quantity":        fmt.Sprintf("%d", req.Quantity),
+		"squareoff":       fmt.Sprintf("%.2f", req.SquareOff),
+		"stoploss":        fmt.Sprintf("%.2f", req.StopLoss),
+		"trailingStopLoss": fmt.Sprintf("%.2f", req.TrailingStopLoss),
+	}
+	if req.Tag != "" {
+		payload["ordertag"] = req.Tag
+	}
+
+	resp, err := a.post("/rest/secure/angelbroking/order/v1/placeOrder", payload, "")
+	if err != nil {
+		return nil, err
+	}
+	data, _ := resp["data"].(map[string]interface{})
+	orderID := ""
+	if data != nil {
+		orderID, _ = data["orderid"].(string)
+	}
+	if resp["status"] == false {
+		msg, _ := resp["message"].(string)
+		return nil, fmt.Errorf("angel one order failed: %s", msg)
+	}
+	return &OrderResp{OrderID: orderID, Status: "success", Message: "Order placed"}, nil
+}
+
+// ModifyOrder modifies a pending order
+func (a *AngelOneBroker) ModifyOrder(orderID string, req PlaceOrderReq) (*OrderResp, error) {
+	if err := a.ensureAuth(); err != nil {
+		return nil, err
+	}
+
+	variety := req.Variety
+	if variety == "" { variety = "NORMAL" }
+
+	payload := map[string]interface{}{
+		"variety":      variety,
+		"orderid":      orderID,
+		"ordertype":    string(req.OrderType),
+		"producttype":  string(req.Product),
+		"duration":     func() string { if req.Validity == "" { return "DAY" }; return req.Validity }(),
+		"price":        fmt.Sprintf("%.2f", req.Price),
+		"triggerprice": fmt.Sprintf("%.2f", req.TriggerPrice),
+		"quantity":     fmt.Sprintf("%d", req.Quantity),
+	}
+
+	resp, err := a.post("/rest/secure/angelbroking/order/v1/modifyOrder", payload, "")
+	if err != nil {
+		return nil, err
+	}
+	data, _ := resp["data"].(map[string]interface{})
+	newOrderID := orderID
+	if data != nil {
+		if id, ok := data["orderid"].(string); ok && id != "" {
+			newOrderID = id
+		}
+	}
+	return &OrderResp{OrderID: newOrderID, Status: "success", Message: "Order modified"}, nil
+}
+
+// CancelOrder cancels a pending order
+func (a *AngelOneBroker) CancelOrder(orderID, variety string) (*OrderResp, error) {
+	if err := a.ensureAuth(); err != nil {
+		return nil, err
+	}
+	if variety == "" { variety = "NORMAL" }
+
+	payload := map[string]interface{}{
+		"variety": variety,
+		"orderid": orderID,
+	}
+
+	resp, err := a.post("/rest/secure/angelbroking/order/v1/cancelOrder", payload, "")
+	if err != nil {
+		return nil, err
+	}
+	data, _ := resp["data"].(map[string]interface{})
+	newID := orderID
+	if data != nil {
+		if id, ok := data["orderid"].(string); ok && id != "" {
+			newID = id
+		}
+	}
+	return &OrderResp{OrderID: newID, Status: "success", Message: "Order cancelled"}, nil
+}
+
+// GetOrderBook returns today's order history
+func (a *AngelOneBroker) GetOrderBook() ([]Order, error) {
+	if err := a.ensureAuth(); err != nil {
+		return nil, err
+	}
+	resp, err := a.get("/rest/secure/angelbroking/order/v1/getOrderBook")
+	if err != nil {
+		return nil, err
+	}
+
+	rawData, _ := resp["data"].([]interface{})
+	var orders []Order
+	for _, item := range rawData {
+		m, ok := item.(map[string]interface{})
+		if !ok { continue }
+		toS := func(k string) string { v, _ := m[k].(string); return v }
+		toF := func(k string) float64 {
+			switch v := m[k].(type) {
+			case float64: return v
+			case string:
+				var f float64; fmt.Sscanf(v, "%f", &f); return f
+			}
+			return 0
+		}
+		toI := func(k string) int {
+			switch v := m[k].(type) {
+			case float64: return int(v)
+			case string:
+				var i int; fmt.Sscanf(v, "%d", &i); return i
+			}
+			return 0
+		}
+
+		status := OrderStatus(strings.ToLower(toS("orderstatus")))
+		if status == "open pending" { status = StatusOpen }
+
+		orders = append(orders, Order{
+			OrderID:         toS("orderid"),
+			Symbol:          toS("tradingsymbol"),
+			Exchange:        toS("exchange"),
+			TransactionType: TransactionType(toS("transactiontype")),
+			OrderType:       OrderType(toS("ordertype")),
+			Product:         ProductType(toS("producttype")),
+			Quantity:        toI("quantity"),
+			FilledQty:       toI("filledshares"),
+			Price:           toF("price"),
+			TriggerPrice:    toF("triggerprice"),
+			AvgPrice:        toF("averageprice"),
+			Status:          status,
+			StatusMessage:   toS("text"),
+		})
+	}
+	return orders, nil
+}
+
+// GetPositions returns intraday/F&O open positions
+func (a *AngelOneBroker) GetPositions() ([]Position, error) {
+	if err := a.ensureAuth(); err != nil {
+		return nil, err
+	}
+	resp, err := a.get("/rest/secure/angelbroking/order/v1/getPosition")
+	if err != nil {
+		return nil, err
+	}
+
+	rawData, _ := resp["data"].([]interface{})
+	var positions []Position
+	for _, item := range rawData {
+		m, ok := item.(map[string]interface{})
+		if !ok { continue }
+		toS := func(k string) string { v, _ := m[k].(string); return v }
+		toF := func(k string) float64 {
+			switch v := m[k].(type) {
+			case float64: return v
+			case string:
+				var f float64; fmt.Sscanf(v, "%f", &f); return f
+			}
+			return 0
+		}
+		toI := func(k string) int {
+			switch v := m[k].(type) {
+			case float64: return int(v)
+			case string:
+				var i int; fmt.Sscanf(v, "%d", &i); return i
+			}
+			return 0
+		}
+
+		netQty := toI("netqty")
+		txnType := TxnBuy
+		if netQty < 0 { txnType = TxnSell }
+		if netQty < 0 { netQty = -netQty }
+
+		positions = append(positions, Position{
+			Symbol:          toS("tradingsymbol"),
+			Exchange:        toS("exchange"),
+			Product:         ProductType(toS("producttype")),
+			TransactionType: txnType,
+			Quantity:        netQty,
+			BuyQty:          toI("buyqty"),
+			SellQty:         toI("sellqty"),
+			BuyPrice:        toF("buyavgprice"),
+			SellPrice:       toF("sellavgprice"),
+			LTP:             toF("ltp"),
+			PnL:             toF("pnl"),
+			RealizedPnL:     toF("realisedpnl"),
+			UnrealizedPnL:   toF("unrealisedpnl"),
+		})
+	}
+	return positions, nil
+}
+
+// GetFunds returns account cash & margin info
+func (a *AngelOneBroker) GetFunds() (*Funds, error) {
+	if err := a.ensureAuth(); err != nil {
+		return nil, err
+	}
+	resp, err := a.get("/rest/secure/angelbroking/user/v1/getRMS")
+	if err != nil {
+		return nil, err
+	}
+
+	data, _ := resp["data"].(map[string]interface{})
+	toF := func(k string) float64 {
+		if data == nil { return 0 }
+		switch v := data[k].(type) {
+		case float64: return v
+		case string:
+			var f float64; fmt.Sscanf(v, "%f", &f); return f
+		}
+		return 0
+	}
+
+	available := toF("availablecash")
+	used := toF("utilisedamount")
+	return &Funds{
+		AvailableCash:   available,
+		UsedMargin:      used,
+		AvailableMargin: toF("net"),
+		TotalBalance:    available + used,
+	}, nil
+}
+
+// ── GTT (Good Till Triggered) — Auto Buy/Sell ─────────────────────────────────
+
+// PlaceGTT places a GTT rule — triggers an order automatically at given price
+func (a *AngelOneBroker) PlaceGTT(req GTTReq) (*OrderResp, error) {
+	if err := a.ensureAuth(); err != nil {
+		return nil, err
+	}
+
+	// GTT payload — SINGLE trigger or OCO (target + stoploss)
+	triggerType := req.TriggerType
+	if triggerType == "" { triggerType = "SINGLE" }
+
+	var triggerList []map[string]interface{}
+	if triggerType == "OCO" {
+		// OCO: two triggers — target (sell) + stoploss (sell)
+		triggerList = []map[string]interface{}{
+			{
+				"triggerPrice": fmt.Sprintf("%.2f", req.StopLossPrice),
+				"price":        fmt.Sprintf("%.2f", req.StopLossPrice*0.99),
+				"qty":          fmt.Sprintf("%d", req.Quantity),
+				"action":       "SELL",
+				"ordertype":    "LIMIT",
+			},
+			{
+				"triggerPrice": fmt.Sprintf("%.2f", req.TargetPrice),
+				"price":        fmt.Sprintf("%.2f", req.TargetPrice*1.01),
+				"qty":          fmt.Sprintf("%d", req.Quantity),
+				"action":       "SELL",
+				"ordertype":    "LIMIT",
+			},
+		}
+	} else {
+		triggerList = []map[string]interface{}{
+			{
+				"triggerPrice": fmt.Sprintf("%.2f", req.TriggerPrice),
+				"price":        fmt.Sprintf("%.2f", req.Price),
+				"qty":          fmt.Sprintf("%d", req.Quantity),
+				"action":       string(req.TransactionType),
+				"ordertype":    "LIMIT",
+			},
+		}
+	}
+
+	payload := map[string]interface{}{
+		"tradingsymbol": req.Symbol,
+		"symboltoken":   req.SymbolToken,
+		"exchange":      req.Exchange,
+		"producttype":   "CNC",
+		"triggerprice":  fmt.Sprintf("%.2f", req.TriggerPrice),
+		"qty":           fmt.Sprintf("%d", req.Quantity),
+		"disclosedqty":  "0",
+		"ltp":           fmt.Sprintf("%.2f", req.LTP),
+		"triggerList":   triggerList,
+		"type":          triggerType,
+	}
+
+	resp, err := a.post("/rest/secure/angelbroking/gtt/v1/createRule", payload, "")
+	if err != nil {
+		return nil, err
+	}
+	if resp["status"] == false {
+		msg, _ := resp["message"].(string)
+		return nil, fmt.Errorf("GTT failed: %s", msg)
+	}
+	data, _ := resp["data"].(map[string]interface{})
+	id := ""
+	if data != nil {
+		if v, ok := data["id"].(float64); ok {
+			id = fmt.Sprintf("%.0f", v)
+		}
+	}
+	return &OrderResp{OrderID: id, Status: "success", Message: "GTT rule created"}, nil
+}
+
+// CancelGTT deletes a GTT rule by task ID
+func (a *AngelOneBroker) CancelGTT(taskID string) (*OrderResp, error) {
+	if err := a.ensureAuth(); err != nil {
+		return nil, err
+	}
+	payload := map[string]interface{}{"id": taskID}
+	resp, err := a.post("/rest/secure/angelbroking/gtt/v1/deleteRule", payload, "")
+	if err != nil {
+		return nil, err
+	}
+	if resp["status"] == false {
+		msg, _ := resp["message"].(string)
+		return nil, fmt.Errorf("GTT cancel failed: %s", msg)
+	}
+	return &OrderResp{OrderID: taskID, Status: "success", Message: "GTT cancelled"}, nil
+}
+
+// GetGTTList returns all active GTT rules
+func (a *AngelOneBroker) GetGTTList() ([]map[string]interface{}, error) {
+	if err := a.ensureAuth(); err != nil {
+		return nil, err
+	}
+	payload := map[string]interface{}{
+		"status": []string{"FORALL"},
+		"page":   1,
+		"count":  100,
+	}
+	resp, err := a.post("/rest/secure/angelbroking/gtt/v1/ruleList", payload, "")
+	if err != nil {
+		return nil, err
+	}
+	rawData, _ := resp["data"].([]interface{})
+	var list []map[string]interface{}
+	for _, item := range rawData {
+		if m, ok := item.(map[string]interface{}); ok {
+			list = append(list, m)
+		}
+	}
+	return list, nil
+}
