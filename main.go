@@ -810,6 +810,9 @@ func main() {
 	log.Printf("   Upstox V3 Feed: ready (starts on first authenticated analyze)")
 	go monitorAndStartFeed()
 
+	// Load full NSE instruments master for search (new listed stocks, SME etc.)
+	go initNSEInstruments()
+
 	// Start WebSocket price broadcaster (fallback for non-feed symbols)
 	startPriceBroadcaster()
 

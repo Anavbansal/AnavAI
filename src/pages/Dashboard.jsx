@@ -57,6 +57,7 @@ const ALL_TABS = [
   {id:'risk',      label:'Risk Calc',   icon:'🎯'},
   {id:'portfolio', label:'My Holdings', icon:'💼'},
   {id:'mf',        label:'Mutual Funds',icon:'🏦'},
+  {id:'ipo',       label:'IPO',         icon:'🚀'},
 ]
 
 const NO_REFETCH = new Set(['portfolio','mf','scanner','alerts','calendar','risk','pf','ipo'])
@@ -285,7 +286,7 @@ export default function Dashboard() {
             ].map(t=>(
               <button key={t.id}
                 className={`mobile-nav-item ${tab===t.id||
-                  (t.id==='__more__'&&['scanner','alerts','calendar','risk','portfolio','mf'].includes(tab))
+                  (t.id==='__more__'&&['scanner','alerts','calendar','risk','portfolio','mf','pf','ipo'].includes(tab))
                   ?'active':''}`}
                 onClick={()=>{ if(t.id==='__more__') setMoreOpen(o=>!o); else { setMoreOpen(false); changeTab(t.id); } }}>
                 <span className="nav-icon">{t.icon}</span>

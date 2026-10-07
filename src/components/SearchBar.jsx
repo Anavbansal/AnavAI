@@ -62,25 +62,6 @@ export default function SearchBar({ onAnalyze, loading }) {
           { headers: token ? { Authorization: `Bearer ${token}` } : {} }
         )
         const data = await r.json()
-        // Also search Angel One if connected (browser → Angel One directly)
-        if (isAngelConnected()) {
-          try {
-            const aoResults = await searchAngelScrip(query.trim())
-            const aoMapped = aoResults.slice(0,8).map(item => ({
-              s: item.tradingsymbol || '',
-              n: item.name || item.tradingsymbol || '',
-              e: item.exch_seg?.includes('BSE') ? 'BSE' : 'NSE',
-              seg: item.instrumenttype?.includes('OPT') || item.instrumenttype?.includes('FUT') ? 'FO' : 'EQ',
-              k: `NSE:${item.symboltoken}`,
-              fromServer: true,
-              src: 'angelone',
-            })).filter(x => x.s)
-            setSuggestions(prev => {
-              const existing = new Set(prev.map(x => x.s))
-              return [...prev, ...aoMapped.filter(x => !existing.has(x.s))].slice(0,20)
-            })
-          } catch {}
-        }
 
         const serverResults = (data.results || []).map(item => ({
           s: item.symbol || item.tradingSymbol || '',
