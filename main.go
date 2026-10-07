@@ -297,6 +297,7 @@ func buildAnalysis(symbol, instrKey string, candles []Candle, token string) *Ana
 }
 
 // handleLTP — fast live price lookup for any symbol
+// Chain: Upstox WS feed → price cache → Upstox REST → Angel One REST
 func handleLTP(w http.ResponseWriter, r *http.Request) {
 	symbol := strings.ToUpper(r.URL.Query().Get("symbol"))
 	if symbol == "" {
@@ -306,15 +307,15 @@ func handleLTP(w http.ResponseWriter, r *http.Request) {
 	token := getToken(r)
 	instrKey := resolveWithSearch(symbol, token)
 
-	// Check V3 feed cache first (zero-latency if subscribed)
+	// 1. Upstox V3 WebSocket feed (zero-latency if subscribed)
 	if tick := upstoxFeed.GetTick(instrKey); tick != nil && tick.LTP > 0 {
 		writeJSON(w, 200, map[string]interface{}{
-			"symbol": symbol, "ltp": tick.LTP, "instrKey": instrKey, "source": "feed",
+			"symbol": symbol, "ltp": tick.LTP, "instrKey": instrKey, "source": "upstox_feed",
 		})
 		return
 	}
 
-	// Check price cache
+	// 2. Price cache (recently fetched)
 	if cached, ok := cache.Get("price:" + symbol); ok {
 		if m, ok := cached.(map[string]interface{}); ok {
 			if p, ok := m["price"].(float64); ok && p > 0 {
@@ -326,20 +327,29 @@ func handleLTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Fetch from Upstox REST LTP
-	ltp, err := fetchLTP(instrKey, token)
-	if err != nil || ltp == 0 {
+	// 3. Upstox REST LTP
+	if ltp, err := fetchLTP(instrKey, token); err == nil && ltp > 0 {
+		upstoxFeed.Subscribe([]string{instrKey})
+		cache.Set("price:"+symbol, map[string]interface{}{"price": ltp}, 5*time.Second)
 		writeJSON(w, 200, map[string]interface{}{
-			"symbol": symbol, "ltp": 0, "instrKey": instrKey, "error": "price unavailable",
+			"symbol": symbol, "ltp": ltp, "instrKey": instrKey, "source": "upstox_rest",
 		})
 		return
 	}
 
-	// Subscribe to feed for future real-time updates
-	upstoxFeed.Subscribe([]string{instrKey})
+	// 4. Angel One fallback — works for all NSE stocks including SME/new listings
+	if broker.AngelOne.IsAuthenticated() {
+		if ltp, angelKey, err := broker.AngelOne.GetLTPBySymbol(symbol); err == nil && ltp > 0 {
+			cache.Set("price:"+symbol, map[string]interface{}{"price": ltp}, 5*time.Second)
+			writeJSON(w, 200, map[string]interface{}{
+				"symbol": symbol, "ltp": ltp, "instrKey": angelKey, "source": "angelone",
+			})
+			return
+		}
+	}
 
 	writeJSON(w, 200, map[string]interface{}{
-		"symbol": symbol, "ltp": ltp, "instrKey": instrKey, "source": "rest",
+		"symbol": symbol, "ltp": 0, "instrKey": instrKey, "error": "price unavailable from all sources",
 	})
 }
 

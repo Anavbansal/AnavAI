@@ -441,6 +441,67 @@ func (a *AngelOneBroker) ResolveInstrumentKey(symbol string) string {
 	return "NSE:" + symbol
 }
 
+// resolvedAngelCache caches dynamically found Angel One tokens
+var resolvedAngelCache sync.Map // symbol -> "NSE:XXXX"
+
+// SearchSymbol finds Angel One symboltoken for any NSE symbol via search API
+func (a *AngelOneBroker) SearchSymbol(symbol string) string {
+	// 1. Static map
+	if tok, ok := angelSymbolMap[symbol]; ok {
+		return tok
+	}
+	// 2. Dynamic cache
+	if v, ok := resolvedAngelCache.Load(symbol); ok {
+		return v.(string)
+	}
+	if err := a.ensureAuth(); err != nil {
+		return "NSE:" + symbol
+	}
+	// 3. Angel One searchscrip API
+	resp, err := a.post("/rest/secure/angelbroking/order/v1/searchScrip", map[string]interface{}{
+		"exchange":   "NSE",
+		"searchscrip": symbol,
+	}, "")
+	if err != nil {
+		return "NSE:" + symbol
+	}
+	if data, ok := resp["data"].([]interface{}); ok {
+		for _, item := range data {
+			m, ok := item.(map[string]interface{})
+			if !ok { continue }
+			tradingSymbol, _ := m["tradingsymbol"].(string)
+			symbolToken, _ := m["symboltoken"].(string)
+			exch, _ := m["exch_seg"].(string)
+			// Exact NSE match
+			if strings.EqualFold(tradingSymbol, symbol) && strings.HasPrefix(exch, "NSE") && symbolToken != "" {
+				key := exch + ":" + symbolToken
+				resolvedAngelCache.Store(symbol, key)
+				return key
+			}
+		}
+		// Fallback: first result
+		if len(data) > 0 {
+			if m, ok := data[0].(map[string]interface{}); ok {
+				symbolToken, _ := m["symboltoken"].(string)
+				exch, _ := m["exch_seg"].(string)
+				if symbolToken != "" && exch != "" {
+					key := exch + ":" + symbolToken
+					resolvedAngelCache.Store(symbol, key)
+					return key
+				}
+			}
+		}
+	}
+	return "NSE:" + symbol
+}
+
+// GetLTPBySymbol fetches live price for any symbol using dynamic token resolution
+func (a *AngelOneBroker) GetLTPBySymbol(symbol string) (float64, string, error) {
+	instrKey := a.SearchSymbol(symbol)
+	ltp, err := a.GetLTP(instrKey, "")
+	return ltp, instrKey, err
+}
+
 // ── HTTP helpers ─────────────────────────────────────────────────────────────
 
 func (a *AngelOneBroker) commonHeaders(token string) map[string]string {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"anavai/broker"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -171,8 +172,15 @@ func startPriceBroadcaster() {
 			hub.mu.RUnlock()
 
 			for symbol, token := range symbols {
-				instrKey := resolveInstrumentKey(symbol)
+				instrKey := resolveWithSearch(symbol, token)
 				ltp, err := fetchLTP(instrKey, token)
+				// Angel One fallback if Upstox fails
+				if (err != nil || ltp == 0) && broker.AngelOne.IsAuthenticated() {
+					if altLTP, _, altErr := broker.AngelOne.GetLTPBySymbol(symbol); altErr == nil && altLTP > 0 {
+						ltp = altLTP
+						err = nil
+					}
+				}
 				if err != nil || ltp == 0 {
 					continue
 				}
