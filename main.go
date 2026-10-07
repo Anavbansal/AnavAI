@@ -275,7 +275,7 @@ func buildAnalysis(symbol, instrKey string, candles []Candle, token string) *Ana
 		WilliamsR:    williamsR,
 		CCI:          cci,
 		ROC:          roc,
-		RiskProfile:  map[string]interface{}{"profile": "Moderate", "leverage": "1x"},
+		RiskProfile:  calcRiskProfile(atr, livePrice, rsi, adx, volRatio, ai.Verdict),
 		Candles:      candles,
 		CandleData:   candles, // frontend reads payload.candleData
 		BollingerBands: bb,
@@ -293,6 +293,36 @@ func buildAnalysis(symbol, instrKey string, candles []Candle, token string) *Ana
 		CircuitLimits: circuit,
 		AI:           ai,
 	}
+}
+
+// calcRiskProfile computes dynamic risk level from technical indicators
+func calcRiskProfile(atr, price, rsi float64, adx *ADXResult, volRatio float64, verdict string) map[string]interface{} {
+	score := 0
+
+	// ATR as % of price → volatility risk
+	if price > 0 {
+		atrPct := atr / price * 100
+		if atrPct > 3.5 { score += 3 } else if atrPct > 2.0 { score += 2 } else if atrPct > 1.0 { score += 1 }
+	}
+
+	// RSI extremes → momentum risk
+	if rsi > 75 || rsi < 25 { score += 2 } else if rsi > 68 || rsi < 32 { score += 1 }
+
+	// ADX → trend strength risk
+	if adx != nil {
+		if adx.ADX > 40 { score += 2 } else if adx.ADX > 25 { score += 1 }
+	}
+
+	// Volume spike → unusual activity risk
+	if volRatio > 3 { score += 2 } else if volRatio > 1.8 { score += 1 }
+
+	// Verdict alignment
+	if verdict == "BUY" { score -= 1 } else if verdict == "SELL" { score += 1 }
+
+	profile := "Low"
+	if score >= 7 { profile = "High" } else if score >= 4 { profile = "Moderate" }
+
+	return map[string]interface{}{"profile": profile, "leverage": "1x", "score": score}
 }
 
 // ── /auth/url ─────────────────────────────────────────────────────────────────

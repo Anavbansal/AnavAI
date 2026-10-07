@@ -37,33 +37,73 @@ function analyzeRisk(holding, ltp, analysis) {
   let score = 0
   const signals = []
   const pnlPct = holding.avg > 0 ? (ltp - holding.avg) / holding.avg * 100 : 0
-  if (pnlPct <= -40) { score += 35; signals.push('Massive loss') }
-  else if (pnlPct <= -20) { score += 25; signals.push('Large loss') }
-  else if (pnlPct <= -10) { score += 15; signals.push('Moderate loss') }
-  else if (pnlPct >= 100) { score += 15; signals.push('Extreme gain — take profits') }
-  else if (pnlPct >= 50)  { score += 8;  signals.push('Large gain') }
+
+  // ── P&L risk (max 30 pts) ──
+  if      (pnlPct <= -40) { score += 30; signals.push('Massive loss (>40%)') }
+  else if (pnlPct <= -25) { score += 22; signals.push('Large loss (>25%)') }
+  else if (pnlPct <= -15) { score += 15; signals.push('Moderate loss (>15%)') }
+  else if (pnlPct <= -8)  { score += 8;  signals.push('Minor loss (>8%)') }
+  else if (pnlPct >= 120) { score += 18; signals.push('Extreme gain — book profits') }
+  else if (pnlPct >= 60)  { score += 10; signals.push('Large gain — trail SL') }
+  else if (pnlPct >= 30)  { score += 5;  signals.push('Good gain — protect profits') }
+
+  // ── Technical indicators (max 45 pts) ──
   if (analysis) {
-    const rsi = analysis.rsi || analysis.indicators?.rsi
-    if (rsi > 80) { score += 20; signals.push(`RSI overbought (${Math.round(rsi)})`) }
-    else if (rsi > 70) { score += 12; signals.push(`RSI high (${Math.round(rsi)})`) }
-    else if (rsi < 30) { score += 15; signals.push(`RSI oversold (${Math.round(rsi)})`) }
+    const rsi = analysis.rsi ?? analysis.indicators?.rsi
+    if (typeof rsi === 'number') {
+      if      (rsi > 82)  { score += 20; signals.push(`RSI severely overbought (${Math.round(rsi)})`) }
+      else if (rsi > 72)  { score += 13; signals.push(`RSI overbought (${Math.round(rsi)})`) }
+      else if (rsi < 22)  { score += 18; signals.push(`RSI severely oversold (${Math.round(rsi)})`) }
+      else if (rsi < 32)  { score += 10; signals.push(`RSI oversold (${Math.round(rsi)})`) }
+      else if (rsi >= 45 && rsi <= 60) { score -= 5 } // healthy RSI → reduce risk
+    }
+
     const st = analysis.supertrend || analysis.indicators?.supertrend
-    if (st === 'sell' || st === 'SELL') { score += 15; signals.push('Supertrend SELL') }
+    const stDir = typeof st === 'string' ? st.toLowerCase()
+                : (st?.direction || '').toLowerCase()
+    if (stDir === 'sell' || stDir === 'down') { score += 18; signals.push('Supertrend SELL signal') }
+    else if (stDir === 'buy' || stDir === 'up') { score -= 5; signals.push('Supertrend BUY') }
+
     const macd = analysis.macd || analysis.indicators?.macd
-    if (macd?.histogram < 0 && macd?.crossover === 'bearish') { score += 10; signals.push('MACD bearish') }
+    if (macd) {
+      if (macd.histogram < 0 && macd.crossover === 'bearish') { score += 12; signals.push('MACD bearish crossover') }
+      else if (macd.histogram < 0) { score += 6; signals.push('MACD below zero') }
+      else if (macd.histogram > 0 && macd.crossover === 'bullish') { score -= 5 }
+    }
+
     const adx = analysis.adx || analysis.indicators?.adx
-    if (adx > 30 && pnlPct < 0) { score += 10; signals.push('Strong downtrend') }
+    const adxVal = typeof adx === 'number' ? adx : adx?.adx ?? adx?.ADX
+    if (adxVal > 35 && pnlPct < 0) { score += 12; signals.push(`Strong downtrend (ADX ${Math.round(adxVal)})`) }
+    else if (adxVal > 25 && pnlPct < 0) { score += 6; signals.push(`Trending down (ADX ${Math.round(adxVal)})`) }
+
+    // VWAP position
+    const vwap = analysis.vwap || analysis.indicators?.vwap
+    if (vwap && ltp < vwap * 0.97) { score += 6; signals.push('Price below VWAP') }
+    else if (vwap && ltp > vwap * 1.03) { score -= 3 }
   }
-  if (holding.cap === 'SmallCap') { score += 8; signals.push('SmallCap risk') }
-  score = Math.min(100, score)
+
+  // ── Cap & sector risk (max 25 pts) ──
+  const cap = holding.cap || 'Unknown'
+  if      (cap === 'SmallCap')  { score += 15; signals.push('SmallCap — higher volatility') }
+  else if (cap === 'MidCap')    { score += 8;  signals.push('MidCap — moderate volatility') }
+  else if (cap === 'Unknown')   { score += 10; signals.push('Cap unknown — assume higher risk') }
+  else if (cap === 'LargeCap')  { score -= 3 } // blue chips: slight risk reduction
+
+  // Risky sectors
+  const riskySecors = ['Realty','Chemicals','Renewable','Defence','Metals']
+  if (riskySecors.includes(holding.sector)) { score += 5; signals.push(`${holding.sector} — cyclical sector`) }
+
+  score = Math.min(100, Math.max(0, score))
+
   let riskLevel, riskColor, riskEmoji, action, actionColor
-  if (score >= 70) {
+  if (score >= 55) {
     riskLevel='HIGH RISK'; riskColor='#ef4444'; riskEmoji='🔴'; action='EXIT / REDUCE'; actionColor='#ef4444'
-  } else if (score >= 45) {
+  } else if (score >= 30) {
     riskLevel='MEDIUM RISK'; riskColor='#f59e0b'; riskEmoji='🟡'; action='HOLD WITH SL'; actionColor='#f59e0b'
   } else {
     riskLevel='LOW RISK'; riskColor='#22c55e'; riskEmoji='🟢'; action='HOLD / BUY MORE'; actionColor='#22c55e'
   }
+
   let stopLoss = 0, target = 0
   if (analysis) {
     const atr = analysis.atr || analysis.indicators?.atr || 0

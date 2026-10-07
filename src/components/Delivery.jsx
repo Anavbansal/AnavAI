@@ -209,7 +209,8 @@ export default function Delivery({ data, ai }) {
         </Section>
         <Section title="🏭 Sector Context">
           <Row label="Sector" value={sector} color="var(--accent2)"/>
-          <Row label="Market Cap" value={data.riskProfile?.profile||'–'} color="var(--text2)"/>
+          <Row label="Volatility Risk" value={data.riskProfile?.profile||'–'}
+            color={data.riskProfile?.profile==='High'?'#ef4444':data.riskProfile?.profile==='Low'?'#22c55e':'#f59e0b'}/>
           <Row label="Regime" value={(data.regime||'–').replace(/_/g,' ')} color="var(--text2)"/>
         </Section>
       </>}
