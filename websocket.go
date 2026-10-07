@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -139,14 +140,22 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				client.token = t
 			}
 		case "SUBSCRIBE":
-			if sym, ok := msg["symbol"].(string); ok {
-				client.symbol = sym
+			// Frontend may send either symbol (string) or symbols (array)
+			if sym, ok := msg["symbol"].(string); ok && sym != "" {
+				client.symbol = strings.ToUpper(strings.TrimSpace(sym))
+			} else if syms, ok := msg["symbols"].([]interface{}); ok && len(syms) > 0 {
+				if s, ok := syms[0].(string); ok && s != "" {
+					client.symbol = strings.ToUpper(strings.TrimSpace(s))
+				}
 			}
+			log.Printf("[WS] Client %s subscribed to symbol: %s", clientID, client.symbol)
 			// Send current cached price immediately
-			cKey := "price:" + client.symbol
-			if cached, ok := cache.Get(cKey); ok {
-				if priceMsg, err := json.Marshal(cached); err == nil {
-					wsSendMessage(conn, priceMsg)
+			if client.symbol != "" {
+				cKey := "price:" + client.symbol
+				if cached, ok := cache.Get(cKey); ok {
+					if priceMsg, err := json.Marshal(cached); err == nil {
+						wsSendMessage(conn, priceMsg)
+					}
 				}
 			}
 		case "PING":

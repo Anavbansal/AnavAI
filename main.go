@@ -109,9 +109,29 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	// Start feed with user's live token on first analyze
 	setFeedToken(token)
 
-	// Fetch candles
+	// Fetch candles — try Upstox first, fallback to Angel One
 	candles, err := fetchHistoricalCandles(instrKey, resolution, token)
-	if err != nil {
+	dataSource := "UPSTOX"
+
+	// Angel One fallback — for symbols Upstox can't resolve (SME, new listings etc)
+	if (err != nil || len(candles) < 5) && broker.AngelOne.IsAuthenticated() {
+		log.Printf("[analyze] Upstox candles insufficient (%d), trying Angel One for %s", len(candles), symbol)
+		angelKey := broker.AngelOne.SearchSymbol(symbol)
+		if angelCandles, angelErr := broker.AngelOne.GetCandles(angelKey, resolution, ""); angelErr == nil && len(angelCandles) > len(candles) {
+			// Convert broker.Candle → main.Candle
+			converted := make([]Candle, len(angelCandles))
+			for i, c := range angelCandles {
+				converted[i] = Candle{Timestamp: c.Timestamp, Open: c.Open, High: c.High, Low: c.Low, Close: c.Close, Volume: c.Volume}
+			}
+			candles = converted
+			instrKey = angelKey
+			dataSource = "ANGELONE"
+			err = nil
+			log.Printf("[analyze] Angel One returned %d candles for %s (%s)", len(candles), symbol, angelKey)
+		}
+	}
+
+	if err != nil && len(candles) == 0 {
 		log.Printf("[analyze] candle fetch error: %v", err)
 		writeJSON(w, 200, map[string]interface{}{
 			"status": "error", "message": "Failed to fetch candles: " + err.Error(),
@@ -121,12 +141,9 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	if len(candles) == 0 {
 		writeJSON(w, 200, map[string]interface{}{
 			"status": "error",
-			"message": "No candle data returned from server",
+			"message": "No candle data returned from any source",
 			"debug": map[string]string{
-				"symbol": symbol,
-				"instrumentKey": instrKey,
-				"resolution": resolution,
-				"tip": "Check if instrumentKey is correct for this symbol",
+				"symbol": symbol, "instrumentKey": instrKey, "resolution": resolution,
 			},
 		})
 		return
@@ -134,8 +151,17 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 
 	// Build response
 	resp := buildAnalysis(symbol, instrKey, candles, token)
+
+	// For Angel One sourced data, fetch live price from Angel One quote
+	if dataSource == "ANGELONE" {
+		if ltp, _, ltpErr := broker.AngelOne.GetLTPBySymbol(symbol); ltpErr == nil && ltp > 0 {
+			resp.Price = ltp
+			resp.LTP   = ltp
+		}
+	}
+
 	resp.Quality = map[string]interface{}{
-		"source":       "UPSTOX_LIVE",
+		"source":       dataSource,
 		"candleCount":  len(candles),
 		"hasLiveToken": token != os.Getenv("UPSTOX_SANDBOX_ACCESS_TOKEN"),
 	}

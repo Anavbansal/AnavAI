@@ -100,7 +100,13 @@ export function useLivePrice(symbol) {
     const sym = symbol.toUpperCase()
     receivedRef.current = false
 
+    // Reset price immediately on symbol change — avoid showing stale price from prev symbol
+    setPriceData(null)
+    setConnected(false)
+
     const cb = (msg) => {
+      // Double-check the message is for the correct symbol
+      if (msg.symbol && msg.symbol.toUpperCase() !== sym) return
       receivedRef.current = true
       clearInterval(pollRef.current)
       setPriceData({ price: msg.price, change: msg.change, changePct: msg.changePct, ts: msg.ts })
@@ -108,13 +114,13 @@ export function useLivePrice(symbol) {
     }
     const unsub = subscribe(sym, cb)
 
-    // After 8s, if no WS price yet → start REST polling every 5s
+    // After 5s, if no WS price yet → start REST polling every 5s
     const fallbackTimer = setTimeout(() => {
       if (!receivedRef.current) {
         fetchREST(sym)
         pollRef.current = setInterval(() => fetchREST(sym), 5000)
       }
-    }, 8000)
+    }, 5000)
 
     return () => {
       unsub()
