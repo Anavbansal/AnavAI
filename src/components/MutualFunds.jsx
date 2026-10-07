@@ -557,57 +557,154 @@ export default function MutualFunds() {
   const totalPnlPct = totals.invested > 0 ? totalPnl/totals.invested*100 : 0
 
   // AI Analysis for a selected fund
+  // ── Local rule-based analysis (always runs — accurate, no API needed) ────────
+  function localMFAnalysis(fund, cat, c1, c3, c5, pnlPct) {
+    const name = (fund.schemeName || '').toLowerCase()
+    const category = (cat || name).toLowerCase()
+
+    // ── Step 1: Risk Level from category (SEBI classification) ────────────────
+    let riskLevel = 'Moderate'
+    if (
+      category.includes('liquid') || category.includes('overnight') ||
+      category.includes('money market') || category.includes('ultra short') ||
+      category.includes('low duration') || category.includes('short duration') ||
+      category.includes('banking and psu') || category.includes('gilt')
+    ) riskLevel = 'Low'
+    else if (
+      category.includes('small cap') || category.includes('smallcap') ||
+      category.includes('micro cap') || category.includes('sectoral') ||
+      category.includes('thematic') || category.includes('international') ||
+      category.includes('global') || category.includes('energy') ||
+      category.includes('technology') || category.includes('pharma') ||
+      category.includes('infrastructure') || category.includes('consumption') ||
+      category.includes('financial services') || category.includes('fof') ||
+      category.includes('fund of fund')
+    ) riskLevel = 'High'
+    else if (
+      category.includes('mid cap') || category.includes('midcap') ||
+      category.includes('flexi') || category.includes('multi cap') ||
+      category.includes('multicap') || category.includes('focused') ||
+      category.includes('value') || category.includes('contra') ||
+      category.includes('aggressive hybrid') || category.includes('balanced advantage') ||
+      category.includes('dynamic asset')
+    ) riskLevel = 'Moderate'
+    else if (
+      category.includes('large cap') || category.includes('largecap') ||
+      category.includes('large & mid') || category.includes('index') ||
+      category.includes('etf') || category.includes('conservative hybrid') ||
+      category.includes('equity savings') || category.includes('arbitrage')
+    ) riskLevel = 'Low to Moderate'
+
+    // ── Step 2: Benchmark by category ─────────────────────────────────────────
+    // Expected 1Y returns: Small/Sectoral > Mid > Flexi/Multi > Large > Debt
+    let bench1Y = 12, bench3Y = 13, bench5Y = 14
+    if (riskLevel === 'High') { bench1Y = 16; bench3Y = 17; bench5Y = 18 }
+    else if (riskLevel === 'Moderate') { bench1Y = 13; bench3Y = 14; bench5Y = 15 }
+    else if (riskLevel === 'Low') { bench1Y = 7; bench3Y = 7; bench5Y = 8 }
+
+    // ── Step 3: Score (0–10) ──────────────────────────────────────────────────
+    let score = 5
+    if (c1 != null) score += c1 >= bench1Y ? 1.5 : c1 >= bench1Y * 0.75 ? 0.5 : -1
+    if (c3 != null) score += c3 >= bench3Y ? 1.5 : c3 >= bench3Y * 0.75 ? 0.5 : -1
+    if (c5 != null) score += c5 >= bench5Y ? 1.5 : c5 >= bench5Y * 0.75 ? 0.5 : -1
+    // Penalize if user P&L is significantly negative despite being long-term
+    if (pnlPct != null && pnlPct < -20) score -= 1
+    score = Math.max(0, Math.min(10, score))
+
+    // ── Step 4: Verdict ───────────────────────────────────────────────────────
+    let verdict, holdFor
+    if (score >= 7.5) {
+      verdict = 'BUY MORE'; holdFor = '3+ years tak hold karo'
+    } else if (score >= 5.5) {
+      verdict = 'HOLD'; holdFor = '2-3 years aur dekho'
+    } else if (score >= 3.5) {
+      verdict = 'REVIEW'; holdFor = '6 months mein reassess karo'
+    } else {
+      verdict = 'EXIT'; holdFor = 'Better fund mein shift karo'
+    }
+
+    // ── Step 5: Pros & Cons ───────────────────────────────────────────────────
+    const pros = [], cons = []
+    if (c1 != null && c1 >= bench1Y)     pros.push(`1Y return ${c1.toFixed(1)}% — category benchmark se better`)
+    if (c3 != null && c3 >= bench3Y)     pros.push(`3Y CAGR ${c3.toFixed(1)}% — consistent long-term performer`)
+    if (c5 != null && c5 >= bench5Y)     pros.push(`5Y CAGR ${c5.toFixed(1)}% — proven track record`)
+    if (pnlPct != null && pnlPct > 20)   pros.push(`Tumhara overall P&L ${pnlPct.toFixed(1)}% — strong personal gain`)
+    if (pros.length === 0)               pros.push('Portfolio mein diversification provide karta hai')
+
+    if (c1 != null && c1 < bench1Y * 0.75) cons.push(`1Y return ${c1.toFixed(1)}% — category average se neeche`)
+    if (c3 != null && c3 < bench3Y * 0.75) cons.push(`3Y CAGR weak — similar funds better perform kar rahe hain`)
+    if (riskLevel === 'High')               cons.push('High risk category — market crash mein zyada nuksaan ho sakta hai')
+    if (pnlPct != null && pnlPct < -10)    cons.push(`Tumhara P&L ${pnlPct.toFixed(1)}% negative — review zaroori`)
+    if (cons.length === 0)                  cons.push('Market risk hamesha rehta hai — diversify karo')
+
+    // ── Step 6: Summary ───────────────────────────────────────────────────────
+    const perfWord = score >= 7 ? 'achha' : score >= 5 ? 'average' : 'kamzor'
+    const riskWord = riskLevel === 'High' ? 'high-risk' : riskLevel === 'Low' ? 'low-risk' : 'moderate-risk'
+    const summary =
+      `Ye ek ${riskWord} fund hai${cat ? ` (${cat})` : ''}. ` +
+      `Performance ${perfWord} hai — ` +
+      (c1 != null ? `1Y mein ${c1.toFixed(1)}% diya, benchmark ${bench1Y}% tha. ` : '') +
+      (verdict === 'HOLD' ? 'Abhi hold karo, exit mat karo.' :
+       verdict === 'BUY MORE' ? 'Strong fund hai, SIP badha sakte ho.' :
+       verdict === 'REVIEW' ? 'Performance weak hai — 6 months baad dobara check karo.' :
+       'Better alternatives available hain — exit consider karo.')
+
+    return { verdict, holdFor, riskLevel, summary, pros: pros.slice(0,3), cons: cons.slice(0,3) }
+  }
+
   const fetchMFAnalysis = useCallback(async (fund, cagr1, cagr3, cagr5, pnlPct) => {
     const key = navKey(fund)
     if (aiAnalysis[key]?.data || aiAnalysis[key]?.loading) return
     setAiAnalysis(prev => ({ ...prev, [key]: { loading: true } }))
+
+    const cat = navMap[key]?.meta?.scheme_category || ''
+    // Always compute local analysis first — accurate and instant
+    const localResult = localMFAnalysis(fund, cat, cagr1, cagr3, cagr5, pnlPct)
+
+    // Try Groq for richer Hinglish summary (optional enhancement)
     try {
-      const prompt = `You are an expert Indian mutual fund advisor. Analyze this fund and give a concise recommendation.
+      const prompt = `You are an expert Indian mutual fund advisor. Analyze this fund.
 
 Fund: ${fund.schemeName}
-Category: ${navMap[key]?.meta?.scheme_category || 'Unknown'}
-1Y CAGR: ${cagr1 != null ? cagr1.toFixed(2)+'%' : 'N/A'}
+Category: ${cat || 'Unknown'}
+Risk Level (already determined): ${localResult.riskLevel}
+1Y CAGR: ${cagr1 != null ? cagr1.toFixed(2)+'%' : 'N/A'} (benchmark: ${
+  localResult.riskLevel==='High'?'16%':localResult.riskLevel==='Low'?'7%':'13%'})
 3Y CAGR: ${cagr3 != null ? cagr3.toFixed(2)+'%' : 'N/A'}
 5Y CAGR: ${cagr5 != null ? cagr5.toFixed(2)+'%' : 'N/A'}
 User P&L: ${pnlPct != null ? pnlPct.toFixed(2)+'%' : 'N/A'}
+Pre-computed verdict: ${localResult.verdict}
 
-Respond in JSON only (no markdown):
-{
-  "verdict": "HOLD" | "BUY MORE" | "REVIEW" | "EXIT",
-  "holdFor": "e.g. 2-3 more years",
-  "riskLevel": "Low" | "Moderate" | "High",
-  "summary": "2-3 lines in Hinglish — simple language, practical advice",
-  "pros": ["point1","point2"],
-  "cons": ["point1","point2"]
-}`
+Write ONLY a JSON object, no markdown, no explanation:
+{"summary":"3 lines max, Hinglish, practical advice based on the data above","pros":["max 2 points"],"cons":["max 2 points"]}`
+
       const res = await fetch(`${API_BASE_URL}/api/analyze-text`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt })
       })
-      if (!res.ok) throw new Error('API error')
-      const raw = await res.text()
-      // Extract JSON from response
-      const match = raw.match(/\{[\s\S]*\}/)
-      const parsed = match ? JSON.parse(match[0]) : null
-      setAiAnalysis(prev => ({ ...prev, [key]: { loading: false, data: parsed } }))
-    } catch {
-      // Fallback local analysis
-      const verdict = (cagr1||0) > 12 ? 'HOLD' : (cagr1||0) > 6 ? 'REVIEW' : 'EXIT'
-      const holdFor = (cagr5||0) > 12 ? '2-3 more years' : '1 year reassess karo'
-      setAiAnalysis(prev => ({ ...prev, [key]: {
-        loading: false,
-        data: {
-          verdict,
-          holdFor,
-          riskLevel: (fund.schemeName||'').toLowerCase().includes('small') ? 'High' :
-                     (fund.schemeName||'').toLowerCase().includes('mid')   ? 'Moderate' : 'Low',
-          summary: `Is fund ka 1Y return ${cagr1!=null?cagr1.toFixed(1)+'%':'N/A'} hai. ${verdict==='HOLD'?'Performance theek hai, hold karo.':verdict==='REVIEW'?'Performance average hai, review karo.':'Performance weak hai, exit consider karo.'}`,
-          pros: cagr1 > 10 ? ['Good recent returns','Market se better performance'] : ['Diversification'],
-          cons: cagr1 < 8  ? ['Below average returns','Better alternatives available'] : ['Market risk']
+      if (res.ok) {
+        const raw = await res.text()
+        const match = raw.match(/\{[\s\S]*\}/)
+        if (match) {
+          const groq = JSON.parse(match[0])
+          // Merge: keep local verdict/risk/holdFor (accurate), enhance summary/pros/cons from Groq
+          setAiAnalysis(prev => ({ ...prev, [key]: {
+            loading: false,
+            data: {
+              ...localResult,
+              summary: groq.summary || localResult.summary,
+              pros: groq.pros?.length ? groq.pros : localResult.pros,
+              cons: groq.cons?.length ? groq.cons : localResult.cons,
+            }
+          }}))
+          return
         }
-      }}))
-    }
+      }
+    } catch { /* fallthrough to local result */ }
+
+    // Use local result (always correct)
+    setAiAnalysis(prev => ({ ...prev, [key]: { loading: false, data: localResult } }))
   }, [aiAnalysis, navMap])
 
   // Search tab
