@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 
-const API = 'https://api.allorigins.win/raw?url=' // CORS proxy for NSE
+const API_BASE_URL = import.meta.env.VITE_API_URL || ''
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const f = (n, d=0) => Number(n||0).toLocaleString('en-IN', {minimumFractionDigits:d, maximumFractionDigits:d})
@@ -223,12 +223,8 @@ export default function IPOTracker() {
   const fetchIPOs = useCallback(async () => {
     setLoading(true); setError(null)
     try {
-      // NSE India IPO data
-      const nseUrl = 'https://www.nseindia.com/api/allIpo'
-      const res = await fetch(
-        `https://api.allorigins.win/raw?url=${encodeURIComponent(nseUrl)}`,
-        { headers: { 'Accept': 'application/json' } }
-      )
+      // Backend proxies NSE (avoids CORS)
+      const res = await fetch(`${API_BASE_URL}/api/ipo`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
 

@@ -785,6 +785,8 @@ func main() {
 		"/api/mf/parse-text": handleCASText,
 		// Generic AI text analysis
 		"/api/analyze-text": handleAnalyzeText,
+		// IPO data proxy (NSE → backend → frontend, avoids CORS)
+		"/api/ipo": handleIPO,
 		// Order management (Angel One)
 		"/api/order/place":   handlePlaceOrder,
 		"/api/order/modify":  handleModifyOrder,
@@ -842,4 +844,37 @@ func main() {
 	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// handleIPO — GET /api/ipo
+// Proxies NSE IPO data server-side (avoids CORS)
+func handleIPO(w http.ResponseWriter, r *http.Request) {
+	urls := []string{
+		"https://www.nseindia.com/api/allIpo",
+		"https://www.nseindia.com/api/allIpo?category=ipo",
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	for _, u := range urls {
+		req, _ := http.NewRequest("GET", u, nil)
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+		req.Header.Set("Accept", "application/json, text/plain, */*")
+		req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+		req.Header.Set("Referer", "https://www.nseindia.com/")
+		req.Header.Set("Connection", "keep-alive")
+		resp, err := client.Do(req)
+		if err != nil || resp.StatusCode != 200 {
+			continue
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "public, max-age=300")
+		io.Copy(w, resp.Body)
+		return
+	}
+	// Fallback: empty structure
+	writeJSON(w, 200, map[string]interface{}{
+		"upcoming": []interface{}{},
+		"current":  []interface{}{},
+		"closed":   []interface{}{},
+	})
 }
