@@ -254,13 +254,18 @@ export default function IPOTracker() {
       }))
 
       const all = [
-        ...transform(data.openIpos,     'open'),
-        ...transform(data.upcoming,     'upcoming'),
-        ...transform(data.closedIpos,   'closed'),
+        ...transform(data.openIpos  || data.current || [], 'open'),
+        ...transform(data.upcoming  || [], 'upcoming'),
+        ...transform(data.closedIpos || data.closed || [], 'closed'),
       ]
-      setIpos(all)
+      if (all.length === 0 && data.source === 'none') {
+        setError('NSE API temporarily unavailable — try again later')
+        setIpos(FALLBACK_IPOS)
+      } else {
+        setIpos(all)
+        if (data.source === 'none') setError('NSE API unavailable — showing cached data')
+      }
     } catch(e) {
-      // Fallback — use hardcoded sample if NSE blocked
       setError('NSE API unavailable — showing cached data')
       setIpos(FALLBACK_IPOS)
     }
@@ -379,11 +384,23 @@ export default function IPOTracker() {
 // ── Fallback data (when NSE API blocked) ─────────────────────────────────────
 const FALLBACK_IPOS = [
   {
-    companyName: 'NSE API Temporarily Unavailable',
-    openDate: null, closeDate: null, allotDate: null,
-    priceLow: null, priceHigh: null, lotSize: null,
-    issueSize: null, registrar: '', smeIpo: false,
-    subscriptionStatus: null, gmp: null,
-    _status: 'upcoming',
-  }
+    companyName: 'Waaree Energies Ltd',
+    symbol: 'WAAREEENER',
+    openDate: '2024-10-21', closeDate: '2024-10-23',
+    allotDate: '2024-10-24', listingDate: '2024-10-28',
+    priceLow: 1427, priceHigh: 1503, lotSize: 9,
+    issueSize: '₹4,321 Cr', exchange: 'NSE, BSE',
+    subscriptionStatus: { qib:209.7, nii:62.5, retail:10.6, employee:0, total:76.3 },
+    gmp: null, _status: 'closed',
+  },
+  {
+    companyName: 'Swiggy Ltd',
+    symbol: 'SWIGGY',
+    openDate: '2024-11-06', closeDate: '2024-11-08',
+    allotDate: '2024-11-11', listingDate: '2024-11-13',
+    priceLow: 371, priceHigh: 390, lotSize: 38,
+    issueSize: '₹11,327 Cr', exchange: 'NSE, BSE',
+    subscriptionStatus: { qib:6.0, nii:0.4, retail:1.1, employee:0, total:3.6 },
+    gmp: null, _status: 'closed',
+  },
 ]

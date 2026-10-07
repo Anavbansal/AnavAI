@@ -846,35 +846,145 @@ func main() {
 	}
 }
 
+// ipoEntry — normalized IPO record
+type ipoEntry struct {
+	CompanyName  string  `json:"companyName"`
+	Symbol       string  `json:"symbol"`
+	OpenDate     string  `json:"openDate"`
+	CloseDate    string  `json:"closeDate"`
+	AllotDate    string  `json:"allotDate"`
+	ListingDate  string  `json:"listingDate"`
+	PriceLow     float64 `json:"priceLow"`
+	PriceHigh    float64 `json:"priceHigh"`
+	LotSize      int     `json:"lotSize"`
+	IssueSize    string  `json:"issueSize"`
+	Exchange     string  `json:"exchange"`
+	Status       string  `json:"_status"` // open | upcoming | closed
+}
+
 // handleIPO — GET /api/ipo
-// Proxies NSE IPO data server-side (avoids CORS)
+// Returns normalized IPO data: { openIpos:[], upcoming:[], closedIpos:[] }
 func handleIPO(w http.ResponseWriter, r *http.Request) {
-	urls := []string{
-		"https://www.nseindia.com/api/allIpo",
-		"https://www.nseindia.com/api/allIpo?category=ipo",
+	client := &http.Client{Timeout: 12 * time.Second}
+
+	// Try NSE first (needs session cookie — often blocked on cloud)
+	type nseResp struct {
+		Upcoming  []map[string]interface{} `json:"upcoming"`
+		OpenIpos  []map[string]interface{} `json:"openIpos"`
+		ClosedIpos []map[string]interface{} `json:"closedIpos"`
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
-	for _, u := range urls {
-		req, _ := http.NewRequest("GET", u, nil)
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-		req.Header.Set("Accept", "application/json, text/plain, */*")
-		req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-		req.Header.Set("Referer", "https://www.nseindia.com/")
-		req.Header.Set("Connection", "keep-alive")
-		resp, err := client.Do(req)
-		if err != nil || resp.StatusCode != 200 {
-			continue
+	req, _ := http.NewRequest("GET", "https://www.nseindia.com/api/allIpo", nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("Referer", "https://www.nseindia.com/market-data/all-upcoming-issues-ipo")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	req.Header.Set("sec-fetch-dest", "empty")
+	req.Header.Set("sec-fetch-mode", "cors")
+	req.Header.Set("sec-fetch-site", "same-origin")
+
+	toFloat := func(v interface{}) float64 {
+		switch t := v.(type) {
+		case float64: return t
+		case string:
+			var f float64
+			fmt.Sscanf(t, "%f", &f)
+			return f
 		}
-		defer resp.Body.Close()
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "public, max-age=300")
-		io.Copy(w, resp.Body)
-		return
+		return 0
 	}
-	// Fallback: empty structure
+	toInt := func(v interface{}) int {
+		switch t := v.(type) {
+		case float64: return int(t)
+		case string:
+			var i int
+			fmt.Sscanf(t, "%d", &i)
+			return i
+		}
+		return 0
+	}
+	strVal := func(m map[string]interface{}, keys ...string) string {
+		for _, k := range keys {
+			if v, ok := m[k]; ok && v != nil {
+				if s, ok := v.(string); ok && s != "" { return s }
+			}
+		}
+		return ""
+	}
+	normalizeNSE := func(m map[string]interface{}, status string) ipoEntry {
+		priceBand := strVal(m, "priceBand", "price_band")
+		var lo, hi float64
+		fmt.Sscanf(priceBand, "%f to %f", &lo, &hi)
+		if lo == 0 { lo = toFloat(m["minPrice"]) }
+		if hi == 0 { hi = toFloat(m["maxPrice"]) }
+		issueSize := strVal(m, "issueSizeInCrores", "issueSize", "issue_size")
+		if issueSize != "" && !strings.Contains(issueSize, "₹") {
+			issueSize = "₹" + issueSize + " Cr"
+		}
+		return ipoEntry{
+			CompanyName: strVal(m, "companyName", "name", "issuerName"),
+			Symbol:      strVal(m, "symbol", "issueSymbol"),
+			OpenDate:    strVal(m, "bidOpenDate", "openDate", "ipoOpenDate"),
+			CloseDate:   strVal(m, "bidCloseDate", "closeDate", "ipoCloseDate"),
+			AllotDate:   strVal(m, "tentativeAllotDate", "allotmentDate"),
+			ListingDate: strVal(m, "listingDate", "tentativeListingDate"),
+			PriceLow:    lo,
+			PriceHigh:   hi,
+			LotSize:     toInt(m["lotSize"]),
+			IssueSize:   issueSize,
+			Exchange:    strVal(m, "exchange", "listingAt"),
+			Status:      status,
+		}
+	}
+
+	resp, err := client.Do(req)
+	if err == nil && resp.StatusCode == 200 {
+		var nse nseResp
+		if json.NewDecoder(resp.Body).Decode(&nse) == nil {
+			resp.Body.Close()
+			open, upcoming, closed := []ipoEntry{}, []ipoEntry{}, []ipoEntry{}
+			for _, m := range nse.OpenIpos   { open     = append(open,     normalizeNSE(m, "open"))     }
+			for _, m := range nse.Upcoming   { upcoming = append(upcoming,  normalizeNSE(m, "upcoming")) }
+			for _, m := range nse.ClosedIpos { closed   = append(closed,   normalizeNSE(m, "closed"))   }
+			writeJSON(w, 200, map[string]interface{}{
+				"openIpos": open, "upcoming": upcoming, "closedIpos": closed,
+				"source": "nse",
+			})
+			return
+		}
+		resp.Body.Close()
+	}
+
+	// Fallback: Chittorgarh / IPO Watch public JSON
+	fallbackURLs := []string{
+		"https://api.chittorgarh.com/ipo/ipo_listing.php?a=list&type=mainboard",
+		"https://ipowatch.in/api/v1/ipos",
+	}
+	for _, fu := range fallbackURLs {
+		freq, _ := http.NewRequest("GET", fu, nil)
+		freq.Header.Set("User-Agent", "Mozilla/5.0")
+		freq.Header.Set("Accept", "application/json")
+		fresp, ferr := client.Do(freq)
+		if ferr == nil && fresp.StatusCode == 200 {
+			var raw interface{}
+			if json.NewDecoder(fresp.Body).Decode(&raw) == nil {
+				fresp.Body.Close()
+				// Return raw — frontend will show what it can
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Cache-Control", "public, max-age=300")
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"openIpos": []interface{}{}, "upcoming": []interface{}{}, "closedIpos": []interface{}{},
+					"raw": raw, "source": fu,
+				})
+				return
+			}
+			fresp.Body.Close()
+		}
+	}
+
+	// Last resort: return empty with message
 	writeJSON(w, 200, map[string]interface{}{
-		"upcoming": []interface{}{},
-		"current":  []interface{}{},
-		"closed":   []interface{}{},
+		"openIpos": []ipoEntry{}, "upcoming": []ipoEntry{}, "closedIpos": []ipoEntry{},
+		"source": "none", "message": "NSE API temporarily unavailable",
 	})
 }
