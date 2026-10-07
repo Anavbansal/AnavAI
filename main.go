@@ -770,6 +770,8 @@ func main() {
 		"/api/quote":         handleQuote,
 		"/api/mf/nav":        handleMFNav,
 		"/api/mf/search":     handleMFSearch,
+		"/api/mf/parse-cas":  handleCASParse,
+		"/api/mf/parse-text": handleCASText,
 	}
 
 	for path, handler := range routes {

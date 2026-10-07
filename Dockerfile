@@ -5,7 +5,7 @@ COPY *.go .
 RUN go build -ldflags="-s -w" -o anavai-server .
 
 FROM alpine:latest
-RUN apk --no-cache add ca-certificates tzdata
+RUN apk --no-cache add ca-certificates tzdata poppler-utils
 WORKDIR /root/
 COPY --from=builder /app/anavai-server .
 EXPOSE 3002

@@ -65,6 +65,167 @@ function SimpleChart({ data }) {
   )
 }
 
+// ── CAS Upload Modal ──────────────────────────────────────────────────────────
+function CASUploadModal({ onImport, onClose }) {
+  const [file,     setFile]     = useState(null)
+  const [pan,      setPan]      = useState('')
+  const [loading,  setLoading]  = useState(false)
+  const [result,   setResult]   = useState(null)
+  const [error,    setError]    = useState('')
+  const [selected, setSelected] = useState({}) // schemeCode/idx → bool
+
+  async function parse() {
+    if (!file) return
+    setLoading(true)
+    setError('')
+    setResult(null)
+    try {
+      const form = new FormData()
+      form.append('cas', file)
+      if (pan.trim()) form.append('pan', pan.trim().toUpperCase())
+      const res  = await fetch(`${API_BASE_URL}/api/mf/parse-cas`, { method:'POST', body:form })
+      const data = await res.json()
+      if (data.status === 'success' && data.funds?.length > 0) {
+        setResult(data.funds)
+        const sel = {}
+        data.funds.forEach((f,i) => { sel[i] = true })
+        setSelected(sel)
+      } else {
+        setError(data.error || 'Koi funds nahi mila PDF mein')
+      }
+    } catch(e) {
+      setError('Parse failed: ' + e.message)
+    }
+    setLoading(false)
+  }
+
+  function importSelected() {
+    if (!result) return
+    const toImport = result.filter((_,i) => selected[i])
+    onImport(toImport)
+    onClose()
+  }
+
+  return (
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.8)',zIndex:9999,
+      display:'flex',alignItems:'center',justifyContent:'center',padding:16}} onClick={onClose}>
+      <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:20,
+        width:'100%',maxWidth:560,maxHeight:'90vh',overflowY:'auto',padding:24}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+          <div>
+            <div style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:16,color:'var(--text)'}}>
+              📄 Import from CAS PDF
+            </div>
+            <div style={{fontSize:11,color:'var(--text3)',marginTop:2}}>
+              CAMS / KFintech Consolidated Account Statement
+            </div>
+          </div>
+          <button onClick={onClose} style={{background:'var(--bg2)',border:'none',color:'var(--text3)',
+            cursor:'pointer',fontSize:18,width:32,height:32,borderRadius:8}}>×</button>
+        </div>
+
+        {/* How to get CAS */}
+        <div style={{padding:'10px 12px',background:'rgba(99,102,241,0.08)',border:'1px solid rgba(99,102,241,0.2)',
+          borderRadius:8,marginBottom:16,fontSize:11,color:'var(--text2)'}}>
+          <div style={{fontWeight:700,marginBottom:4}}>📥 CAS PDF kaise milega?</div>
+          <div>1. <a href="https://www.camsonline.com/Investors/Statements/Consolidated-Account-Statement"
+            target="_blank" rel="noopener noreferrer" style={{color:'var(--accent)'}}>camsonline.com</a> pe jao</div>
+          <div>2. Statement Type → <b>Detailed</b> select karo</div>
+          <div>3. Email pe PDF aayega (password = PAN number uppercase)</div>
+          <div style={{marginTop:4,color:'var(--text3)'}}>Ya MF Central → Statements → CAS</div>
+        </div>
+
+        {!result ? (<>
+          {/* File upload */}
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:11,color:'var(--text3)',marginBottom:6,fontWeight:600}}>CAS PDF FILE</div>
+            <label style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',
+              background:'var(--bg2)',border:`2px dashed ${file?'var(--accent)':'var(--border)'}`,
+              borderRadius:10,cursor:'pointer',transition:'border .2s'}}>
+              <span style={{fontSize:20}}>📄</span>
+              <span style={{fontSize:12,color:file?'var(--text)':'var(--text3)'}}>
+                {file ? file.name : 'Click karo ya PDF drop karo'}
+              </span>
+              <input type="file" accept=".pdf" style={{display:'none'}}
+                onChange={e=>setFile(e.target.files[0])}/>
+            </label>
+          </div>
+
+          {/* PAN (optional — for password) */}
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:11,color:'var(--text3)',marginBottom:6,fontWeight:600}}>
+              PAN NUMBER <span style={{fontWeight:400}}>(PDF password ke liye)</span>
+            </div>
+            <input value={pan} onChange={e=>setPan(e.target.value.toUpperCase())}
+              placeholder="e.g. ABCDE1234F"
+              style={{width:'100%',background:'var(--bg2)',border:'1px solid var(--border)',
+                borderRadius:8,color:'var(--text)',padding:'9px 12px',fontSize:13,
+                outline:'none',boxSizing:'border-box',fontFamily:"'DM Mono',monospace"}}/>
+          </div>
+
+          {error && <div style={{padding:'8px 12px',background:'rgba(239,68,68,0.1)',
+            border:'1px solid rgba(239,68,68,0.3)',borderRadius:8,fontSize:12,
+            color:'#ef4444',marginBottom:12}}>{error}</div>}
+
+          <button onClick={parse} disabled={!file||loading}
+            style={{width:'100%',padding:'12px',borderRadius:10,border:'none',cursor:'pointer',
+              background:(!file||loading)?'var(--border)':'var(--accent)',
+              color:'#fff',fontWeight:700,fontSize:14,opacity:(!file||loading)?0.6:1}}>
+            {loading ? '⟳ Parsing PDF...' : '🔍 Parse & Import Funds'}
+          </button>
+        </>) : (<>
+          {/* Results */}
+          <div style={{marginBottom:12}}>
+            <div style={{fontWeight:700,fontSize:13,color:'var(--text)',marginBottom:8}}>
+              ✅ {result.length} funds mila — select karo jo add karne hain:
+            </div>
+            <div style={{border:'1px solid var(--border)',borderRadius:10,overflow:'hidden',maxHeight:320,overflowY:'auto'}}>
+              {result.map((f,i) => (
+                <div key={i} onClick={()=>setSelected(p=>({...p,[i]:!p[i]}))}
+                  style={{display:'flex',alignItems:'flex-start',gap:10,padding:'10px 14px',
+                    borderBottom:'1px solid var(--border)',cursor:'pointer',
+                    background:selected[i]?'rgba(99,102,241,0.06)':'transparent',
+                    transition:'background .15s'}}>
+                  <div style={{width:18,height:18,borderRadius:4,marginTop:1,flexShrink:0,
+                    background:selected[i]?'var(--accent)':'var(--bg2)',
+                    border:`2px solid ${selected[i]?'var(--accent)':'var(--border)'}`,
+                    display:'flex',alignItems:'center',justifyContent:'center'}}>
+                    {selected[i] && <span style={{color:'#fff',fontSize:11}}>✓</span>}
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12,fontWeight:600,color:'var(--text)',lineHeight:1.3}}>
+                      {f.schemeName}
+                    </div>
+                    <div style={{fontSize:10,color:'var(--text3)',marginTop:2,fontFamily:"'DM Mono',monospace"}}>
+                      {f.isin && `ISIN: ${f.isin} · `}
+                      {f.units > 0 && `Units: ${f.units}`}
+                      {f.avgNav > 0 && ` · Avg NAV: ₹${f.avgNav}`}
+                      {f.amc && ` · ${f.amc}`}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div style={{display:'flex',gap:8}}>
+            <button onClick={()=>setResult(null)}
+              style={{flex:1,padding:'10px',borderRadius:8,border:'1px solid var(--border)',
+                background:'transparent',color:'var(--text3)',cursor:'pointer',fontSize:12}}>
+              ← Back
+            </button>
+            <button onClick={importSelected}
+              disabled={!Object.values(selected).some(Boolean)}
+              style={{flex:2,padding:'10px',borderRadius:8,border:'none',cursor:'pointer',
+                background:'var(--accent)',color:'#fff',fontWeight:700,fontSize:13}}>
+              ✅ {Object.values(selected).filter(Boolean).length} Funds Import Karo
+            </button>
+          </div>
+        </>)}
+      </div>
+    </div>
+  )
+}
+
 // ── Add Fund Modal ────────────────────────────────────────────────────────────
 function AddFundModal({ onAdd, onClose }) {
   const [query,   setQuery]   = useState('')
@@ -198,6 +359,7 @@ export default function MutualFunds() {
   const [navMap,     setNavMap]     = useState({})   // schemeCode → {nav, date, meta}
   const [loadingNav, setLoadingNav] = useState(false)
   const [showAdd,    setShowAdd]    = useState(false)
+  const [showCAS,    setShowCAS]    = useState(false)
   const [selected,   setSelected]   = useState(null) // for detail view
 
   // Search tab state
@@ -242,6 +404,23 @@ export default function MutualFunds() {
 
   function addFund(fund) {
     const updated = [...portfolio, fund]
+    setPortfolio(updated)
+    savePortfolio(updated)
+  }
+
+  function importCASFunds(casFunds) {
+    const newFunds = casFunds.map(f => ({
+      schemeCode: f.schemeCode || '',
+      schemeName: f.schemeName,
+      isin:       f.isin || '',
+      units:      f.units || 0,
+      avgNav:     f.avgNav || 0,
+      addedAt:    Date.now(),
+    }))
+    // Merge — don't duplicate by ISIN or name
+    const existing = new Set(portfolio.map(p => p.isin || p.schemeName))
+    const toAdd = newFunds.filter(f => !existing.has(f.isin || f.schemeName))
+    const updated = [...portfolio, ...toAdd]
     setPortfolio(updated)
     savePortfolio(updated)
   }
@@ -344,11 +523,18 @@ export default function MutualFunds() {
                 <div style={{fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:13,color:m.c}}>{m.v}</div>
               </div>
             ))}
-            <button onClick={()=>setShowAdd(true)}
-              style={{marginLeft:'auto',padding:'8px 16px',borderRadius:8,border:'none',cursor:'pointer',
-                background:'var(--accent)',color:'#fff',fontWeight:700,fontSize:12}}>
-              + Add Fund
-            </button>
+            <div style={{marginLeft:'auto',display:'flex',gap:8}}>
+              <button onClick={()=>setShowCAS(true)}
+                style={{padding:'8px 14px',borderRadius:8,border:'1px solid var(--accent)',cursor:'pointer',
+                  background:'transparent',color:'var(--accent)',fontWeight:700,fontSize:12}}>
+                📄 CAS Import
+              </button>
+              <button onClick={()=>setShowAdd(true)}
+                style={{padding:'8px 14px',borderRadius:8,border:'none',cursor:'pointer',
+                  background:'var(--accent)',color:'#fff',fontWeight:700,fontSize:12}}>
+                + Manual Add
+              </button>
+            </div>
           </div>
         )}
 
@@ -442,11 +628,18 @@ export default function MutualFunds() {
             <div style={{fontSize:12,color:'var(--text3)',marginBottom:20}}>
               Apne mutual funds add karo — live NAV se real-time P&amp;L dikhega
             </div>
-            <button onClick={()=>setShowAdd(true)}
-              style={{padding:'10px 24px',borderRadius:10,border:'none',cursor:'pointer',
-                background:'var(--accent)',color:'#fff',fontWeight:700,fontSize:13}}>
-              + Pehla Fund Add Karo
-            </button>
+            <div style={{display:'flex',gap:10,justifyContent:'center',flexWrap:'wrap'}}>
+              <button onClick={()=>setShowCAS(true)}
+                style={{padding:'10px 24px',borderRadius:10,border:'2px solid var(--accent)',cursor:'pointer',
+                  background:'transparent',color:'var(--accent)',fontWeight:700,fontSize:13}}>
+                📄 CAS PDF se Import (Recommended)
+              </button>
+              <button onClick={()=>setShowAdd(true)}
+                style={{padding:'10px 20px',borderRadius:10,border:'1px solid var(--border)',cursor:'pointer',
+                  background:'var(--bg2)',color:'var(--text3)',fontWeight:600,fontSize:12}}>
+                + Manual Add
+              </button>
+            </div>
           </div>
         )}
 
@@ -561,8 +754,9 @@ export default function MutualFunds() {
         </div>
       )}
 
-      {/* Add Fund Modal */}
+      {/* Modals */}
       {showAdd && <AddFundModal onAdd={addFund} onClose={()=>setShowAdd(false)}/>}
+      {showCAS && <CASUploadModal onImport={importCASFunds} onClose={()=>setShowCAS(false)}/>}
     </div>
   )
 }
