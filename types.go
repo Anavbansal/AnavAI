@@ -42,6 +42,11 @@ type AIResult struct {
 
 // AnalyzeResponse is what we return
 type AnalyzeResponse struct {
+	// Instrument identifiers (needed by frontend OrderPanel)
+	InstrumentKey string   `json:"instrumentKey"`
+	SymbolToken   string   `json:"symbolToken"`
+	Exchange      string   `json:"exchange"`
+	LTP           float64  `json:"ltp"`
 	// Price data
 	Symbol        string   `json:"symbol"`
 	Price         float64  `json:"price"`

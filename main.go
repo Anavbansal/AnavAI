@@ -233,7 +233,18 @@ func buildAnalysis(symbol, instrKey string, candles []Candle, token string) *Ana
 	if macd != nil && macd.Histogram > 0 { bullCount++ }
 	if bullCount >= 3 { trendConsistency = "CONFIRMED" } else if bullCount <= 1 { trendConsistency = "BEARISH" }
 
+	// Derive exchange and symbolToken from instrKey (format "NSE:3045")
+	exchPart, symTokPart := "NSE", instrKey
+	if idx := strings.Index(instrKey, ":"); idx != -1 {
+		exchPart   = instrKey[:idx]
+		symTokPart = instrKey[idx+1:]
+	}
+
 	return &AnalyzeResponse{
+		InstrumentKey: instrKey,
+		SymbolToken:   symTokPart,
+		Exchange:      exchPart,
+		LTP:           livePrice,
 		Symbol:       symbol,
 		Price:        livePrice,
 		Change:       change,
